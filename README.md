@@ -171,7 +171,15 @@ oneclick-cli history         # changes made so far
   ```
   The script runs `oneclick-cli bench`. It also measures the window and tray watch from a throwaway data folder, and rewrites `docs/data/benchmarks.json` and `.js`.
 - **Turn the site on once:** repository Settings → Pages → Deploy from a branch → `main`, folder `/docs`. It's then served at `https://mitovoid-ai.github.io/one-click-optimizer/`.
-
+- **Vercel, website only:** `tools\deploy-site.ps1` uploads just `docs/`, so the app's code never goes to Vercel. It first copies the latest release's files into `docs/download/` and checks them against the release checksums. The download buttons serve them from the site, and the page has no links to GitHub. Run it again after each release. `docs/download/` is not kept in git.
+  - First time, sign in with `npx vercel login`, then run the script and answer its questions:
+    - Set up and deploy? **Yes**
+    - Link to an existing project? **No**
+    - Project name: **oneclick-optimizer**
+    - Code directory: **./**
+    - Change settings? **No**
+  - After that, every run of the script deploys the current `docs/` to production.
+  - Turn on **Analytics → Web Analytics** in the Vercel project to count visits.
 ## What the deep scan checks
 
 | Area | What it finds |

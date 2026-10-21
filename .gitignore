@@ -1,2 +1,6 @@
 /target
 /dist
+# Vercel's local link to the website project
+docs/.vercel
+# Release files the site deploy copies in (served by Vercel, not kept in git)
+docs/download/
