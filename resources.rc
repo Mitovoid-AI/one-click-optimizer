@@ -1,0 +1,5 @@
+// Icons compiled into OneClickOptimizer.exe. ID 1 (lowest) is the icon Explorer shows.
+1 ICON "assets/app.ico"
+2 ICON "assets/tray-normal.ico"
+3 ICON "assets/tray-high.ico"
+4 ICON "assets/tray-critical.ico"
