@@ -13,11 +13,20 @@ Written in Rust with raw Win32 / GDI+: no browser engine and no UI framework.
 | `OneClickOptimizer.exe agent` | Tray watch + quick panel | ~2 MB idle, ~4 MB with the panel open |
 | `oneclick-cli.exe` | Text / JSON report | runs and exits |
 
+## Download
+
+Get **`OneClickOptimizer-Setup.exe`** from the [latest release](https://github.com/Mitovoid-AI/one-click-optimizer/releases/latest). It's about 900 KB.
+
+| File | What it is |
+|---|---|
+| `OneClickOptimizer-Setup.exe` | Installer: Start menu, desktop shortcut, tray watch, uninstall from Settings |
+| `OneClickOptimizer.exe` | Portable app that runs without installing |
+| `oneclick-cli.exe` | Command-line report |
+| `SHA256SUMS.txt` | Checksums (the app uses them to verify updates) |
+
 ## Installing (for a new user)
 
-Share one file: **`dist\OneClickOptimizer-Setup.exe`** (about 900 KB). Make it with `tools\package.ps1`.
-
-1. The user double-clicks it.
+1. The user downloads `OneClickOptimizer-Setup.exe` and double-clicks it.
    - Windows SmartScreen may say "Windows protected your PC" because the file isn't code-signed yet. Click **More info**, then **Run anyway**.
 2. The setup screen offers two options:
    - Desktop shortcut
@@ -34,12 +43,18 @@ What they'll find afterwards:
 | Start menu | "OneClick Optimizer" (search works) |
 | Desktop | OneClick Optimizer icon (if chosen) |
 | Next to the clock | Tray icon with the coloured status dot; click it for the quick panel (if chosen) |
-| Settings → Apps → Installed apps | "OneClick Optimizer 0.2.0" with an **Uninstall** button |
+| Settings → Apps → Installed apps | "OneClick Optimizer" with its version and an **Uninstall** button |
 | Task Manager → Startup apps | "OneClickOptimizer" (only if the tray option is on) |
 | `%LOCALAPPDATA%\Programs\OneClickOptimizer` | The app itself |
 | `%LOCALAPPDATA%\OneClickOptimizer` | History (undo journal) and the tray log |
 
-**Updating:** run a newer `OneClickOptimizer-Setup.exe`. It closes the running app, replaces it, and keeps the history.
+**Updates are automatic.** The app checks GitHub Releases each time it opens, and the tray watch checks every 6 hours. When there's a newer version, it asks:
+
+- **Update now:** downloads the new version and checks its SHA-256 against the release before running it. A file that doesn't match is never run. Then it installs the update (keeping your choices and history) and restarts the app.
+- **Skip this version:** doesn't ask again until an even newer version comes out.
+- **Later:** asks again next time.
+
+From the tray you can also right-click → **Check for updates**. Portable copies update themselves in place.
 
 **Uninstalling:** Settings → Apps → OneClick Optimizer → Uninstall. This removes the app, the shortcuts, the tray icon, the startup entry and the history. Changes the app made to the PC stay as they are; undo them first in History & undo if wanted.
 
@@ -104,6 +119,23 @@ oneclick-cli history         # changes made so far
 - **Undo journal.** Every change is recorded in `%LOCALAPPDATA%\OneClickOptimizer\journal.json`. Settings changes can be undone; closed apps simply start again, and deleted junk is gone.
 - **Admin only when needed.** Admin changes run in a short-lived elevated copy of the exe. The plan is passed on its command line, so there is no temp file to tamper with.
 
+## Publishing a release
+
+Bump `version` in `Cargo.toml`, commit, then push a matching tag:
+
+```
+git tag v0.3.0
+git push origin v0.3.0
+```
+
+`.github/workflows/release.yml` then runs on GitHub:
+1. Checks that the tag matches `Cargo.toml`.
+2. Runs all the tests.
+3. Builds the exes.
+4. Publishes a release with the installer, the portable exe, the CLI and `SHA256SUMS.txt`.
+
+Installed copies see the new release and offer the update.
+
 ## Building and testing
 
 ```
@@ -122,6 +154,11 @@ Test switches:
 - `OCO_OFFSCREEN=1` opens the window off-screen for screenshot tests.
 - `OCO_TICK_MS` speeds up the tray timer.
 - `OCO_TRACE=1` prints per-category junk scan times.
+- `OCO_FAKE_VERSION=0.1.0` makes the app think it's older, to try the update prompt.
+- `OCO_NO_UPDATE_CHECK=1` turns the automatic update check off.
+- `OCO_INSTALL_ROOT` and `OCO_DATA_DIR` install into, and keep history in, throwaway folders.
+
+The release workflow runs all tests before it builds a release, so a version that fails them is never published.
 
 ## Layout
 
@@ -139,5 +176,8 @@ src/
   agent.rs      tray watch + quick panel
   paint.rs      shared drawing (palette, fonts, GDI+ shapes, hover buttons)
   icon.rs       app and tray icons
+  install.rs    per-user install/uninstall (shortcuts, Settings > Apps entry, startup entry)
+  setup.rs      setup screen, update mode (--update), uninstall flow (--uninstall)
+  update.rs     GitHub Releases check, Update now / Skip / Later prompt, verified download
   report.rs     text/JSON report
 ```

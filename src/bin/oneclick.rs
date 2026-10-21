@@ -4,6 +4,10 @@ use optimizer::{agent, elevate, install, setup, ui};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    // Leftovers from a previous update (OneClickOptimizer.<pid>.old).
+    if let Ok(me) = std::env::current_exe() {
+        install::cleanup_old_copies(&me);
+    }
     let code = match args.get(1).map(String::as_str) {
         Some("agent") => {
             agent::run();
@@ -14,6 +18,7 @@ fn main() {
             setup::run();
             0
         }
+        Some("--update") => setup::update_mode(),
         Some("--uninstall") => setup::uninstall_flow(args.iter().any(|a| a == "--quiet")),
         // The download is named OneClickOptimizer-Setup.exe: show the installer.
         _ if setup::should_show_setup() => {
@@ -21,10 +26,6 @@ fn main() {
             0
         }
         _ => {
-            let layout = install::Layout::standard();
-            if install::running_installed_copy(&layout) {
-                install::cleanup_old_copies(&layout);
-            }
             ui::run();
             0
         }

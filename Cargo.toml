@@ -1,6 +1,6 @@
 [package]
 name = "oneclick-optimizer"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 description = "OneClick Optimizer: a tiny Windows app that finds what slows your PC, explains it, and fixes it in one click."
 license = "MIT"

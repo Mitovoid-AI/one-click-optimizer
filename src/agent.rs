@@ -42,6 +42,8 @@ const WM_CONTEXTMENU: u32 = 0x7B;
 const WM_APP: u32 = 0x8000;
 const WM_TRAY: u32 = WM_APP + 10;
 const WM_DEVTOOLS: u32 = WM_APP + 11;
+const WM_UPDATE: u32 = WM_APP + 12;
+const WM_UPDATE_DONE: u32 = WM_APP + 13;
 const WM_P_SCANNED: u32 = WM_APP + 20;
 const WM_P_DONE: u32 = WM_APP + 21;
 const NIN_BALLOONUSERCLICK: u32 = 0x405;
@@ -79,6 +81,15 @@ const CMD_PANEL: usize = 1;
 const CMD_OPEN: usize = 2;
 const CMD_AUTOSTART: usize = 3;
 const CMD_EXIT: usize = 4;
+const CMD_UPDATE: usize = 5;
+
+/// First update check 30 s after start, then every 6 hours (in 5 s ticks).
+const UPDATE_FIRST_TICK: u64 = 6;
+const UPDATE_EVERY_TICKS: u64 = 6 * 3600 / 5;
+
+/// Newer release waiting for the user (offered via a notification).
+static AGENT_UPDATE: Mutex<Option<crate::update::Release>> = Mutex::new(None);
+static AGENT_UPDATE_ERR: Mutex<Option<String>> = Mutex::new(None);
 
 // Not 1/2: those are IDOK/IDCANCEL.
 const ID_P_CLOSE: u16 = 101;
@@ -124,6 +135,55 @@ struct State {
 
 thread_local! {
     static ST: RefCell<Option<State>> = const { RefCell::new(None) };
+    /// The last notification was "update available" (so a click means update).
+    static BALLOON_IS_UPDATE: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Checks GitHub off-thread; the answer comes back as WM_UPDATE
+/// (wparam: 1 = user asked, lparam: 1 = found, 2 = error).
+fn spawn_update_check(hwnd: HWND, manual: bool) {
+    let target = hwnd as usize;
+    std::thread::spawn(move || {
+        let found = match crate::update::check(manual) {
+            Ok(Some(r)) => {
+                *AGENT_UPDATE.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
+                1
+            }
+            Ok(None) => 0,
+            Err(e) => {
+                *AGENT_UPDATE_ERR.lock().unwrap_or_else(|x| x.into_inner()) = Some(e);
+                2
+            }
+        };
+        unsafe { PostMessageW(target as HWND, WM_UPDATE, manual as usize, found) };
+    });
+}
+
+/// Shows "Update now / Skip / Later" and starts the update if chosen.
+unsafe fn offer_update(hwnd: HWND) {
+    let pending = AGENT_UPDATE.lock().unwrap_or_else(|e| e.into_inner()).take();
+    let Some(r) = pending else { return };
+    match crate::update::prompt(null_mut(), &r) {
+        crate::update::Choice::Update => {
+            log(&format!("update: downloading {}", r.version));
+            let target = hwnd as usize;
+            std::thread::spawn(move || {
+                let ok = match crate::update::apply(&r) {
+                    Ok(()) => 1,
+                    Err(e) => {
+                        *AGENT_UPDATE_ERR.lock().unwrap_or_else(|x| x.into_inner()) = Some(e);
+                        0
+                    }
+                };
+                PostMessageW(target as HWND, WM_UPDATE_DONE, ok, 0);
+            });
+        }
+        crate::update::Choice::Skip => {
+            log(&format!("update: skipped {}", r.version));
+            crate::update::skip(&r.version);
+        }
+        crate::update::Choice::Later => {}
+    }
 }
 
 static DEVTOOL_RESULT: Mutex<Option<(String, usize, u64, String)>> = Mutex::new(None);
@@ -249,6 +309,7 @@ unsafe fn add_icon(hwnd: HWND) {
 }
 
 unsafe fn balloon(hwnd: HWND, title: &str, text: &str, warning: bool) {
+    BALLOON_IS_UPDATE.with(|b| b.set(false));
     let mut nid = base_nid(hwnd);
     nid.uFlags = NIF_INFO;
     copy_into(&mut nid.szInfoTitle, title);
@@ -262,7 +323,7 @@ fn tick() {
     let mem = sys::mem::read_mem();
     let (ratio, level) = analyze::pressure(&mem);
     let now = sys::mem::now_filetime();
-    let Some((hwnd, changed, alert, devtools)) = ST.with(|s| {
+    let Some((hwnd, changed, alert, devtools, update_due)) = ST.with(|s| {
         let mut b = s.borrow_mut();
         let st = b.as_mut()?;
         st.ticks += 1;
@@ -278,10 +339,14 @@ fn tick() {
         if devtools {
             st.devtool_check_running = true;
         }
-        Some((st.hwnd, changed, alert, devtools))
+        let update_due = st.ticks == UPDATE_FIRST_TICK || st.ticks % UPDATE_EVERY_TICKS == 0;
+        Some((st.hwnd, changed, alert, devtools, update_due))
     }) else {
         return;
     };
+    if update_due {
+        spawn_update_check(hwnd, false);
+    }
 
     unsafe {
         let mut nid = base_nid(hwnd);
@@ -384,6 +449,7 @@ unsafe fn show_menu(hwnd: HWND) {
     AppendMenuW(menu, MF_STRING, CMD_PANEL, wide("Quick optimise\u{2026}").as_ptr());
     AppendMenuW(menu, MF_STRING, CMD_OPEN, wide(&format!("Open {APP_NAME}")).as_ptr());
     AppendMenuW(menu, MF_STRING | if autostart { MF_CHECKED } else { 0 }, CMD_AUTOSTART, wide("Start with Windows").as_ptr());
+    AppendMenuW(menu, MF_STRING, CMD_UPDATE, wide(&format!("Check for updates (v{})", crate::install::VERSION)).as_ptr());
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
     AppendMenuW(menu, MF_STRING, CMD_EXIT, wide("Exit tray watch").as_ptr());
     let mut pt = POINT { x: 0, y: 0 };
@@ -402,6 +468,7 @@ unsafe fn show_menu(hwnd: HWND) {
         CMD_EXIT => {
             DestroyWindow(hwnd);
         }
+        CMD_UPDATE => spawn_update_check(hwnd, true),
         _ => {}
     }
 }
@@ -416,6 +483,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         WM_TRAY => {
             match (lparam as u32) & 0xFFFF {
                 WM_LBUTTONUP => toggle_panel(),
+                NIN_BALLOONUSERCLICK if BALLOON_IS_UPDATE.with(Cell::get) => {
+                    BALLOON_IS_UPDATE.with(|b| b.set(false));
+                    offer_update(hwnd);
+                }
                 WM_LBUTTONDBLCLK | NIN_BALLOONUSERCLICK => open_app(),
                 WM_RBUTTONUP | WM_CONTEXTMENU => show_menu(hwnd),
                 _ => {}
@@ -424,6 +495,36 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         }
         WM_DEVTOOLS => {
             on_devtools_result();
+            0
+        }
+        WM_UPDATE => {
+            let manual = wparam == 1;
+            match lparam {
+                1 if manual => offer_update(hwnd),
+                1 => {
+                    let v = AGENT_UPDATE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|r| r.version.clone()).unwrap_or_default();
+                    log(&format!("update: version {v} is available"));
+                    balloon(hwnd, &format!("OneClick Optimizer {v} is available"), "Click here to update now (takes a few seconds).", false);
+                    BALLOON_IS_UPDATE.with(|b| b.set(true));
+                }
+                0 if manual => balloon(hwnd, "You're up to date", &format!("OneClick Optimizer {} is the latest version.", crate::install::VERSION), false),
+                2 if manual => {
+                    let e = AGENT_UPDATE_ERR.lock().unwrap_or_else(|x| x.into_inner()).take().unwrap_or_default();
+                    balloon(hwnd, "Couldn't check for updates", &e, false);
+                }
+                _ => {}
+            }
+            0
+        }
+        WM_UPDATE_DONE => {
+            if wparam == 1 {
+                log("update: handing over to the new version");
+                DestroyWindow(hwnd); // the update restarts the tray watch
+            } else {
+                let e = AGENT_UPDATE_ERR.lock().unwrap_or_else(|x| x.into_inner()).take().unwrap_or_default();
+                log(&format!("update failed: {e}"));
+                balloon(hwnd, "The update couldn't be installed", &e, true);
+            }
             0
         }
         WM_DESTROY => {

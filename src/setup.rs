@@ -416,6 +416,47 @@ unsafe extern "system" fn proc_(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LP
     }
 }
 
+/// `OneClickOptimizer-Setup.exe --update`: started by the app's "Update now".
+/// Installs over the current version keeping the user's choices, then
+/// restarts the app (and the tray watch if it was running).
+pub fn update_mode() -> i32 {
+    use windows_sys::Win32::UI::WindowsAndMessaging::FindWindowW;
+    let title = wide(APP_NAME);
+    unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE) };
+    let l = Layout::standard();
+    let tray_running = unsafe { !FindWindowW(wide(crate::agent::TRAY_CLASS).as_ptr(), null()).is_null() };
+    // Let the app that started us finish exiting.
+    std::thread::sleep(std::time::Duration::from_millis(800));
+    let opts = Options {
+        desktop_shortcut: l.desktop_lnk.exists(),
+        tray_at_startup: l.live && crate::sys::startup::agent_autostart(),
+    };
+    let result = std::env::current_exe().map_err(|e| e.to_string()).and_then(|src| install::install(&src, &l, &opts));
+    let quiet = std::env::var_os("OCO_OFFSCREEN").is_some();
+    match result {
+        Ok(()) => {
+            if l.live {
+                if tray_running || opts.tray_at_startup {
+                    let _ = std::process::Command::new(l.exe()).arg("agent").spawn();
+                }
+                let _ = std::process::Command::new(l.exe()).spawn();
+            }
+            if !quiet {
+                let msg = wide(&format!("OneClick Optimizer was updated to version {VERSION}."));
+                unsafe { MessageBoxW(null_mut(), msg.as_ptr(), title.as_ptr(), MB_ICONINFORMATION) };
+            }
+            0
+        }
+        Err(e) => {
+            if !quiet {
+                let msg = wide(&format!("The update didn't finish: {e}\n\nYour current version still works."));
+                unsafe { MessageBoxW(null_mut(), msg.as_ptr(), title.as_ptr(), MB_ICONERROR) };
+            }
+            2
+        }
+    }
+}
+
 /// `OneClickOptimizer.exe --uninstall [--quiet]` (run by Settings > Apps).
 pub fn uninstall_flow(quiet: bool) -> i32 {
     let title = wide(APP_NAME);

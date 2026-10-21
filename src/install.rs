@@ -258,11 +258,15 @@ pub fn close_running(l: &Layout) {
     }
 }
 
-/// Removes leftovers from an update (`*.old` copies of a running exe).
-pub fn cleanup_old_copies(l: &Layout) {
-    if let Ok(entries) = std::fs::read_dir(&l.dir) {
+/// Removes leftovers from an update: `<exe name>.<pid>.old` copies next to
+/// `exe` (only files that start with this exe's own name).
+pub fn cleanup_old_copies(exe: &Path) {
+    let (Some(dir), Some(stem)) = (exe.parent(), exe.file_stem()) else { return };
+    let prefix = format!("{}.", stem.to_string_lossy().to_lowercase());
+    if let Ok(entries) = std::fs::read_dir(dir) {
         for e in entries.flatten() {
-            if e.file_name().to_string_lossy().ends_with(".old") {
+            let name = e.file_name().to_string_lossy().to_lowercase();
+            if name.starts_with(&prefix) && name.ends_with(".old") {
                 let _ = std::fs::remove_file(e.path());
             }
         }

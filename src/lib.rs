@@ -22,6 +22,7 @@ pub mod report;
 pub mod setup;
 pub mod sys;
 pub mod ui;
+pub mod update;
 pub mod util;
 
 /// Product name shown everywhere.

@@ -72,6 +72,12 @@ const WM_APP_APPLIED: u32 = WM_APP + 2;
 const WM_APP_CHECKS: u32 = WM_APP + 3;
 const WM_APP_STEP: u32 = WM_APP + 4;
 const WM_APP_OPTIMIZED: u32 = WM_APP + 5;
+const WM_APP_UPDATE: u32 = WM_APP + 6;
+const WM_APP_UPDATE_DONE: u32 = WM_APP + 7;
+
+/// A newer release found by the background check, waiting to be offered.
+static PENDING_UPDATE: Mutex<Option<crate::update::Release>> = Mutex::new(None);
+static UPDATE_ERROR: Mutex<Option<String>> = Mutex::new(None);
 
 const LVM_FIRST: u32 = 0x1000;
 const LVM_SETIMAGELIST: u32 = LVM_FIRST + 3;
@@ -706,7 +712,7 @@ unsafe fn paint(ui: &Ui, hdc: HDC, w: i32, h: i32) {
     let logo = s(ui, 32);
     DrawIconEx(hdc, s(ui, 22), s(ui, 26), ui.logo, logo, logo, 0, null_mut(), 3);
     text(hdc, APP_NAME, rect(s(ui, 62), s(ui, 22), g.sidebar - s(ui, 6), s(ui, 44)), ui.f.brand, WHITE, DT_SINGLELINE | DT_END_ELLIPSIS);
-    text(hdc, "Faster PC in one click", rect(s(ui, 62), s(ui, 44), g.sidebar, s(ui, 64)), ui.f.small, SIDEBAR_MUTED, DT_SINGLELINE);
+    text(hdc, &format!("Faster PC in one click \u{00B7} v{}", crate::install::VERSION), rect(s(ui, 62), s(ui, 44), g.sidebar, s(ui, 64)), ui.f.small, SIDEBAR_MUTED, DT_SINGLELINE | DT_END_ELLIPSIS);
 
     match (view(), home()) {
         (View::Home, Home::Welcome) => paint_welcome(ui, hdc, &g),
@@ -1777,6 +1783,53 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             SetTimer(hwnd, TIMER_LIVE, 2000, None);
             if let Some(ui) = ui() {
                 layout(&ui);
+            }
+            // Look for a newer release on GitHub in the background.
+            let target = hwnd as usize;
+            std::thread::spawn(move || {
+                if let Ok(Some(r)) = crate::update::check(false) {
+                    *PENDING_UPDATE.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
+                    PostMessageW(target as HWND, WM_APP_UPDATE, 0, 0);
+                }
+            });
+            0
+        }
+        WM_APP_UPDATE => {
+            let pending = PENDING_UPDATE.lock().unwrap_or_else(|e| e.into_inner()).take();
+            if let Some(r) = pending {
+                match crate::update::prompt(hwnd, &r) {
+                    crate::update::Choice::Update => {
+                        windows_sys::Win32::UI::WindowsAndMessaging::SetWindowTextW(
+                            hwnd,
+                            wide(&format!("{APP_NAME} \u{2014} downloading version {}\u{2026}", r.version)).as_ptr(),
+                        );
+                        let target = hwnd as usize;
+                        std::thread::spawn(move || {
+                            let ok = match crate::update::apply(&r) {
+                                Ok(()) => 1,
+                                Err(e) => {
+                                    *UPDATE_ERROR.lock().unwrap_or_else(|x| x.into_inner()) = Some(e);
+                                    0
+                                }
+                            };
+                            PostMessageW(target as HWND, WM_APP_UPDATE_DONE, ok, 0);
+                        });
+                    }
+                    crate::update::Choice::Skip => crate::update::skip(&r.version),
+                    crate::update::Choice::Later => {}
+                }
+            }
+            0
+        }
+        WM_APP_UPDATE_DONE => {
+            if wparam == 1 {
+                // The new version takes over from here.
+                windows_sys::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd);
+            } else {
+                windows_sys::Win32::UI::WindowsAndMessaging::SetWindowTextW(hwnd, wide(APP_NAME).as_ptr());
+                let e = UPDATE_ERROR.lock().unwrap_or_else(|x| x.into_inner()).take().unwrap_or_default();
+                let msg = wide(&format!("The update couldn't be installed: {e}\n\nYour current version keeps working."));
+                MessageBoxW(hwnd, msg.as_ptr(), wide(crate::update::DIALOG_TITLE).as_ptr(), MB_ICONINFORMATION);
             }
             0
         }

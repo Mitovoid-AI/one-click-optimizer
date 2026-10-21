@@ -73,6 +73,11 @@ pub fn hex_decode(s: &str) -> Option<Vec<u8>> {
 /// %LOCALAPPDATA%\OneClickOptimizer (created on demand). The folder of the
 /// app's earlier name (RamDoctor) is moved over once, keeping the history.
 pub fn data_dir() -> PathBuf {
+    // OCO_DATA_DIR: tests keep their history/settings away from the real ones.
+    if let Some(d) = std::env::var_os("OCO_DATA_DIR").map(PathBuf::from).filter(|p| p.is_absolute()) {
+        let _ = std::fs::create_dir_all(&d);
+        return d;
+    }
     let base = std::env::var_os("LOCALAPPDATA")
         .map(PathBuf::from)
         .unwrap_or_else(std::env::temp_dir);
