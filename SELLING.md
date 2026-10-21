@@ -1,6 +1,6 @@
 # Selling Pro: launch checklist
 
-Pro is **$10 once**, sold through **Polar**. It is built and tested with an offline fake store, and stays switched off until the three Polar values in `src/license.rs` are filled in. Until then every feature is free.
+Pro is **$20 lifetime** (pay once), with a **$10 lifetime launch price until 31 January 2027**, sold through **Polar**. It is built and tested with an offline fake store, and stays switched off until the three Polar values in `src/license.rs` are filled in. Until then every feature is free.
 
 > This is not legal or tax advice. Check the tax and legal steps with a Chartered Accountant (CA) before the first sale.
 
@@ -29,7 +29,7 @@ The name lives in `APP_NAME` (`src/lib.rs`), the window and tray class names, `a
 ## 2. Website (GitHub Pages is fine)
 
 Polar reviews your site before it pays out. It needs:
-- **A landing page:** what the app does, a real screenshot, the price ($10 once), the download link and a contact email.
+- **A landing page:** what the app does, a real screenshot, the price, clearly marked lifetime ($20 lifetime, $10 until 31 January 2027), the download link and a contact email.
 - **`/terms`** (and `/eula`), from `legal/EULA.txt`.
 - **`/privacy`**, from `legal/PRIVACY.md`.
 - **`/refund`**, from `legal/REFUND.md`.
@@ -43,10 +43,11 @@ Keep the copy calm and honest. Don't use "your PC is at risk", fake scan numbers
 
 **Money.**
 - **Fee:** 5% + 50¢ per sale (for organizations created from May 2026), plus 1.5% on cards from outside the US.
-- **What you keep:** about **$9.00** of a $10 US sale.
+- **What you keep:** about **$9.00** of a $10 US sale (the launch price), and about **$18.50** of a $20 sale.
 - **Payouts:** Stripe Connect Express to your Indian bank account, in rupees. Expect a small monthly and per-payout fee, plus up to 1% for currency conversion.
+- **Launch price:** $10 until 31 January 2027, then $20, and the $20 must really start on 1 February. A crossed-out price that was never charged is a fake reference price, which is illegal in the US, the EU, the UK and India. A launch price that really ends is fine. The app and the website switch to $20 by themselves at 1 February 2027, 00:00 UTC (`LAUNCH_ENDS` in `src/license.rs`, `Date.UTC(2027, 1, 1)` in `docs/index.html`).
 - **Merchant of record:** Polar collects and pays US sales tax and EU/UK VAT for you.
-- **Refunds:** sales are final (`legal/REFUND.md`). The exceptions are a key that won't activate or Pro not working on the buyer's PC (fix it or refund, within 30 days) and refunds the law requires. Polar can still refund an order itself within 60 days to head off a chargeback, even under a no-refund policy. A bank dispute costs $15 even if you win, and too many disputes (about 0.7% of sales) can get the account suspended. So refunding a genuinely unhappy buyer is the cheaper option.
+- **Refunds:** sales are final (`legal/REFUND.md`). The exceptions are a key that won't activate or Pro not working on the buyer's PC (fix it or refund, within 30 days) and refunds the law requires. Polar can still refund an order itself within 60 days to head off a chargeback, even under a no-refund policy. A bank dispute costs $15 even if you win, and Polar holds accounts to a 0.4% chargeback rate. Answer support threads Polar loops you into within 48 hours, or Polar may refund the customer itself. So refunding a genuinely unhappy buyer is the cheaper option.
 
 **Before you build on it:**
 - Polar's account review can take up to 14 days and needs your live website.
@@ -55,12 +56,17 @@ Keep the copy calm and honest. Don't use "your PC is at risk", fake scan numbers
 
 **Setup:**
 1. **Create an account.** Sign up at polar.sh and create an organization. Copy its **Organization ID** (Settings).
-2. **Create the product.** One product, **one-time price of $10**, called "OneClick Optimizer Pro".
+2. **Create the product.** One product, **one-time price of $20**, called "OneClick Optimizer Pro".
 3. **Give it a License Keys benefit.**
    - **Activation limit: 3.** No expiry. A short key prefix such as `OCO` is fine.
    - Copy the benefit's **ID**.
-4. **Make a checkout link** for the product and copy its URL.
-5. **Try everything in the sandbox first** (sandbox.polar.sh, with test cards). In `src/license.rs`, fill in the sandbox values:
+4. **Add the launch discount** (Products → Discounts):
+   - Name: `Launch price`. Buyers see this name at checkout.
+   - **50%** off. Leave **Code empty**, so it only comes through the checkout link.
+   - Restricted to this product.
+   - **Ends at 1 February 2027, 00:00 UTC** (05:30 in India), the same moment the app and the website switch to $20.
+5. **Make a checkout link** for the product, set **Discount** to "Launch price", and copy its URL.
+6. **Try everything in the sandbox first** (sandbox.polar.sh, with test cards). In `src/license.rs`, fill in the sandbox values:
    ```rust
    const POLAR: Store = Store {
        provider: Provider::Polar { sandbox: true },
@@ -71,7 +77,10 @@ Keep the copy calm and honest. Don't use "your PC is at risk", fake scan numbers
    };
    ```
    Build it, then buy, activate, use "Move Pro to another PC", and refund. After the refund, activating the key again must fail. Installed copies drop a refunded key at their next re-check, which runs every 14 days.
-6. **Go live.** Swap in the live values with `sandbox: false`. Make one real $10 purchase yourself, then refund it.
+7. **Go live.** Swap in the live values with `sandbox: false`. **Never test with a real card.** Polar treats that as card testing and can block the account. Instead:
+   - Create a second discount, "Owner test": **100%**, max redemptions **1**, no code.
+   - Create a second checkout link with it preset. Buy Pro for $0 with your own email.
+   - With that key: activate, use "Move Pro to another PC", activate again, then revoke the key in Polar. After the 14-day re-check, or on a fresh activation, it must stop working.
 
 The app sends Polar only the key, your organization ID and an anonymous PC tag. It never sends the PC name.
 

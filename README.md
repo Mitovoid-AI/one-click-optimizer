@@ -130,9 +130,9 @@ Flip **Watch in tray** in the sidebar, or run `OneClickOptimizer.exe agent`.
 - It warns you once when memory has been critical for 2 minutes, and once when dev tools sit idle.
 - Its activity is logged to `%LOCALAPPDATA%\OneClickOptimizer\agent.log`.
 
-### Pro ($10 once, no account)
+### Pro ($20 lifetime, $10 until 31 January 2027, no account)
 
-Pro switches on by itself once the Polar IDs are filled in (`POLAR` in `src/license.rs`). Until then every feature is free.
+Pro is sold through Polar (`POLAR` in `src/license.rs`). If the IDs are left empty, there is no store and every feature is free.
 
 | | Free | Pro |
 |---|---|---|

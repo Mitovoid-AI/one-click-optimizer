@@ -1,4 +1,4 @@
-//! Pro license: $10 once, no account.
+//! Pro license: $20 once ($10 launch price until 1 February 2027), no account.
 //!
 //! The buyer pays on the store's hosted checkout (email only) and gets a
 //! license key. The app activates it once with the store's PUBLIC license API
@@ -37,16 +37,33 @@ pub struct Store {
     pub price: &'static str,
 }
 
-pub const PRICE: &str = "$10";
+/// Pro's full price.
+pub const PRICE: &str = "$20";
+/// Charged until `LAUNCH_ENDS`: the checkout link carries a 50% "Launch price"
+/// discount that Polar ends at the same time (see SELLING.md).
+pub const LAUNCH_PRICE: &str = "$10";
+/// 1 February 2027, 00:00 UTC.
+pub const LAUNCH_ENDS: u64 = 1_801_440_000;
+pub const LAUNCH_ENDS_TEXT: &str = "1 February 2027";
+
+/// The price to show at `now`, and the full price while the launch price runs.
+pub fn price_at(full: &'static str, now: u64) -> (&'static str, Option<&'static str>) {
+    if now < LAUNCH_ENDS {
+        (LAUNCH_PRICE, Some(full))
+    } else {
+        (full, None)
+    }
+}
 
 /// The live store. Paste the three values from the Polar dashboard (see
 /// SELLING.md); Pro switches on by itself once they are filled in.
 #[cfg_attr(feature = "license-mock", allow(dead_code))]
 const POLAR: Store = Store {
     provider: Provider::Polar { sandbox: false },
-    checkout_url: "",
-    product_id: "",
-    org_id: "",
+    checkout_url: "https://buy.polar.sh/polar_cl_8V5m8NArA6JURSM8Ssb7jkqSwR8aZ4Q1n6Nmp0Kor9M",
+    // The "OneClick Optimizer Pro license" benefit (License Keys).
+    product_id: "b86d596c-d342-483d-80a3-45d10dae015a",
+    org_id: "6ffc6006-b048-449b-9d05-50897e9096d4",
     price: PRICE,
 };
 
@@ -563,7 +580,14 @@ mod tests {
         assert!(!ready(&empty), "an empty store keeps Pro switched off");
         let filled = Store { provider: Provider::Polar { sandbox: true }, checkout_url: "https://buy.polar.sh/x", product_id: "b", org_id: "o", price: PRICE };
         assert!(ready(&filled));
-        assert_eq!(PRICE, "$10");
+        assert_eq!(PRICE, "$20");
+    }
+
+    #[test]
+    fn launch_price_ends_on_1_february_2027() {
+        assert_eq!(LAUNCH_ENDS, (365 * 57 + 14 + 31) * 86_400, "57 years, 14 leap days, then January");
+        assert_eq!(price_at(PRICE, LAUNCH_ENDS - 1), ("$10", Some("$20")));
+        assert_eq!(price_at(PRICE, LAUNCH_ENDS), ("$20", None));
     }
 
     #[test]
@@ -588,9 +612,13 @@ mod tests {
 
     #[cfg(not(feature = "license-mock"))]
     #[test]
-    fn everything_is_free_until_pro_launches() {
-        assert!(!launched());
-        assert!(is_pro());
-        assert!(can_one_click());
+    fn pro_is_sold_through_live_polar() {
+        assert!(launched());
+        let st = store().expect("Pro is on sale");
+        assert!(matches!(st.provider, Provider::Polar { sandbox: false }), "never ship the sandbox store");
+        assert!(st.checkout_url.starts_with("https://buy.polar.sh/polar_cl_"));
+        for id in [st.product_id, st.org_id] {
+            assert_eq!(id.len(), 36, "{id} should be a Polar ID");
+        }
     }
 }

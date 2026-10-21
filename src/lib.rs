@@ -10,6 +10,7 @@ pub mod actions;
 pub mod agent;
 pub mod analyze;
 pub mod autopilot;
+pub mod confetti;
 pub mod devclean;
 pub mod elevate;
 pub mod focus;

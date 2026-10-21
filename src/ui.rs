@@ -152,6 +152,11 @@ const ID_KEEP: u16 = 257;
 const TIMER_WATCH: usize = 2;
 const TIMER_SPIN: usize = 3;
 const TIMER_LIVE: usize = 4;
+/// Animates activation and the confetti that follows it.
+const TIMER_FX: usize = 5;
+/// Activation takes at least this long: the check reads as a real step and
+/// the result never flashes past.
+const ACTIVATE_MIN_MS: u64 = 2400;
 
 pub const CLASS: &str = "OneClickOptimizerWindow";
 const AGENT_CLASS: &str = "OneClickOptimizerTray";
@@ -438,6 +443,9 @@ thread_local! {
     static OPT_SUB: RefCell<String> = const { RefCell::new(String::new()) };
     static ALL_CHECKED: Cell<bool> = const { Cell::new(false) };
     static NOTE: RefCell<(String, Tone)> = const { RefCell::new((String::new(), Tone::Muted)) };
+    /// When the running activation started.
+    static ACTIVATING: Cell<Option<std::time::Instant>> = const { Cell::new(None) };
+    static CONFETTI: RefCell<Option<crate::confetti::Burst>> = const { RefCell::new(None) };
     static AGENT_ON: Cell<bool> = const { Cell::new(false) };
     static CHECKS_PENDING: Cell<bool> = const { Cell::new(false) };
     /// History: the closed program picked in the list ("Never close this").
@@ -868,6 +876,14 @@ unsafe fn paint(ui: &Ui, hdc: HDC, w: i32, h: i32) {
         };
         text(hdc, &note, g.note, if tone == Tone::Muted { ui.f.body } else { ui.f.bold }, color, DT_WORDBREAK | DT_END_ELLIPSIS);
     }
+
+    if view() == View::Pro {
+        CONFETTI.with(|c| {
+            if let Some(b) = c.borrow().as_ref() {
+                b.draw(&Gfx::new(hdc));
+            }
+        });
+    }
 }
 
 unsafe fn paint_welcome(ui: &Ui, hdc: HDC, g: &Geom) {
@@ -1112,15 +1128,33 @@ unsafe fn draw_button(ui: &Ui, d: &DrawItem) {
             draw_primary(d, CARD, "Optimise now", &sub, &ui.f, None, ui.dpi);
         }
         ID_AGAIN => draw_primary(d, BG, "Scan again", "", &ui.f, None, ui.dpi),
-        ID_BUY => draw_primary(d, PANEL, "Buy Pro", "secure checkout by Polar", &ui.f, None, ui.dpi),
-        ID_ACTIVATE => draw_secondary(d, PANEL, "Activate", &ui.f, ui.dpi),
+        ID_BUY => draw_primary(d, PANEL, "Buy lifetime Pro", "one payment \u{00B7} secure checkout by Polar", &ui.f, None, ui.dpi),
+        ID_ACTIVATE => match ACTIVATING.with(Cell::get) {
+            Some(t0) => {
+                let ms = t0.elapsed().as_millis() as f32;
+                let done = (ms / ACTIVATE_MIN_MS as f32).min(0.94);
+                let label = if ms < 1200.0 { "Checking your key\u{2026}" } else { "Unlocking Pro\u{2026}" };
+                fill(hdc, &rc, PANEL);
+                let gfx = Gfx::new(hdc);
+                let r = s(ui, BUTTON_RADIUS);
+                gfx.fill_round(&rc, r as f32, WHITE, Some(BORDER));
+                let bar = rect(rc.left + 1, rc.top + 1, rc.left + 1 + ((rc.right - rc.left - 2) as f32 * done) as i32, rc.bottom - 1);
+                if bar.right - bar.left > 2 * r {
+                    gfx.fill_round(&bar, (r - 1) as f32, (204, 251, 241), None);
+                }
+                drop(gfx);
+                text(hdc, label, rc, ui.f.bold, ACCENT_DOWN, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+            }
+            None => draw_secondary(d, PANEL, "Activate", &ui.f, ui.dpi),
+        },
         ID_DEACTIVATE => draw_secondary(d, CARD, "Move Pro to another PC", &ui.f, ui.dpi),
         ID_CHANGES => draw_secondary(d, BG, "See what changed", &ui.f, ui.dpi),
         ID_RESCAN => draw_secondary(d, BG, "Rescan", &ui.f, ui.dpi),
         ID_AP_SWITCH => {
             fill(hdc, &rc, CARD);
-            if crate::license::is_pro() {
-                let on = autopilot::load().enabled;
+            let on = autopilot::load().enabled;
+            // Without Pro the switch still shows while it is on, so it can be switched off.
+            if crate::license::is_pro() || on {
                 text(hdc, if on { "On" } else { "Off" }, rect(rc.left, rc.top, rc.right - s(ui, 52), rc.bottom), ui.f.bold, if on { INK } else { MUTED }, DT_SINGLELINE | DT_VCENTER | DT_RIGHT);
                 draw_switch(hdc, &rc, on, if hover { (148, 163, 184) } else { DISABLED }, ui.dpi);
             } else {
@@ -1159,7 +1193,7 @@ unsafe fn draw_button(ui: &Ui, d: &DrawItem) {
         }
         ID_FOCUS => {
             let (on, busy) = with_data(|d| (d.focus.is_some(), d.focus_busy));
-            if !crate::license::is_pro() {
+            if !crate::license::is_pro() && !on && !busy {
                 draw_secondary(d, CARD, "Unlock with Pro", &ui.f, ui.dpi);
             } else if busy {
                 draw_secondary(d, CARD, "Working\u{2026}", &ui.f, ui.dpi);
@@ -2032,6 +2066,26 @@ struct ProRects {
     deactivate: RECT,
 }
 
+/// Centre and radius of the check badge on the "Pro is active" card.
+fn pro_badge(ui: &Ui, g: &Geom) -> (f32, f32, f32) {
+    (((g.card.left + g.card.right) / 2) as f32, (g.card.top + s(ui, 52)) as f32, s(ui, 26) as f32)
+}
+
+/// Overshoots a little, then settles: 0 -> 1.
+fn ease_out_back(t: f32) -> f32 {
+    let (c1, c3) = (1.70158, 2.70158);
+    1.0 + c3 * (t - 1.0).powi(3) + c1 * (t - 1.0).powi(2)
+}
+
+/// False when Windows animations are switched off (Settings > Accessibility).
+fn animations_on() -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::SystemParametersInfoW;
+    const SPI_GETCLIENTAREAANIMATION: u32 = 0x1042;
+    let mut on: i32 = 1;
+    unsafe { SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &mut on as *mut i32 as *mut _, 0) };
+    on != 0
+}
+
 fn pro_rects(ui: &Ui, g: &Geom) -> ProRects {
     let c = g.card;
     let mid = c.left + (c.right - c.left) * 56 / 100;
@@ -2066,8 +2120,19 @@ unsafe fn paint_pro(ui: &Ui, hdc: HDC, g: &Geom) {
     let pr = pro_rects(ui, g);
     let c = g.card;
 
-    if let Some(lic) = crate::license::load() {
-        let head = rect(c.left, c.top + s(ui, 64), c.right, c.top + s(ui, 104));
+    if let Some(lic) = crate::license::load().filter(|_| ACTIVATING.with(Cell::get).is_none()) {
+        // A check badge that pops in while the confetti flies.
+        let (cx, cy, r) = pro_badge(ui, g);
+        let pop = CONFETTI.with(|c| c.borrow().as_ref().map(|b| b.age_ms())).map_or(1.0, |ms| ease_out_back((ms / 380.0).min(1.0)));
+        let gfx = Gfx::new(hdc);
+        gfx.circle(cx, cy, r * pop, ACCENT, None);
+        drop(gfx);
+        if pop > 0.6 {
+            let half = (r * pop) as i32;
+            let (x, y) = (cx as i32, cy as i32);
+            text(hdc, "\u{E73E}", rect(x - half, y - half, x + half, y + half), ui.f.icons_big, WHITE, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+        let head = rect(c.left, c.top + s(ui, 96), c.right, c.top + s(ui, 136));
         text(hdc, "Pro is active on this PC", head, ui.f.title, INK, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
         let who = if lic.email.is_empty() { format!("License {}", lic.masked_key()) } else { format!("License {}  \u{00B7}  {}", lic.masked_key(), lic.email) };
         let line = |y: i32, t: &str, font, color| text(hdc, t, rect(c.left + s(ui, 24), y, c.right - s(ui, 24), y + s(ui, 24)), font, color, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
@@ -2099,6 +2164,8 @@ unsafe fn paint_pro(ui: &Ui, hdc: HDC, g: &Geom) {
     let free = match crate::license::free_runs_left() {
         0 => "Your 3 free one-click runs are used. Everything marked Free keeps working.".to_string(),
         1 => "You have 1 free one-click run left.".to_string(),
+        // Pro (the key is saved while its activation finishes): no count to show.
+        u32::MAX => String::new(),
         n => format!("You have {n} free one-click runs left."),
     };
     text(hdc, &free, rect(l.left, y + s(ui, 12), l.right, l.bottom), ui.f.small, MUTED, DT_WORDBREAK);
@@ -2107,11 +2174,17 @@ unsafe fn paint_pro(ui: &Ui, hdc: HDC, g: &Geom) {
     let r = pr.right;
     Gfx::new(hdc).fill_round(&r, s(ui, 12) as f32, PANEL, None);
     let (il, ir, top) = (r.left + s(ui, 24), r.right - s(ui, 24), r.top + s(ui, 20));
-    let price = crate::license::store().map_or(crate::license::PRICE, |st| st.price);
+    let full = crate::license::store().map_or(crate::license::PRICE, |st| st.price);
+    let (price, launch) = crate::license::price_at(full, crate::util::unix_now());
     text(hdc, price, rect(il, top, ir, top + s(ui, 56)), ui.f.huge, INK, DT_SINGLELINE | DT_VCENTER);
     let pw = text_width(hdc, price, ui.f.huge);
-    text(hdc, "one payment", rect(il + pw + s(ui, 10), top + s(ui, 10), ir, top + s(ui, 52)), ui.f.section, MUTED, DT_SINGLELINE | DT_VCENTER);
-    text(hdc, "No subscription, no account. Use it on up to 3 PCs; your key arrives by email.", rect(il, top + s(ui, 58), ir, pr.buy.top - s(ui, 4)), ui.f.small, MUTED, DT_WORDBREAK | DT_END_ELLIPSIS);
+    // "lifetime" as big as the eye reads it, so the price never looks monthly.
+    text(hdc, "lifetime", rect(il + pw + s(ui, 10), top + s(ui, 6), ir, top + s(ui, 52)), ui.f.big, ACCENT_DOWN, DT_SINGLELINE | DT_VCENTER);
+    let terms = match launch {
+        Some(full) => format!("Pay once, no monthly fee, up to 3 PCs. {full}\u{00A0}lifetime from {}.", crate::license::LAUNCH_ENDS_TEXT),
+        None => "Pay once, no monthly fee. Every update included, up to 3 PCs.".to_string(),
+    };
+    text(hdc, &terms, rect(il, top + s(ui, 58), ir, pr.buy.top - s(ui, 4)), ui.f.small, MUTED, DT_WORDBREAK | DT_END_ELLIPSIS);
     text(hdc, "Already bought? Paste your key:", rect(il, pr.buy.bottom + s(ui, 18), ir, pr.buy.bottom + s(ui, 42)), ui.f.small_bold, INK, DT_SINGLELINE | DT_VCENTER);
     let frame = rect(pr.key.left - s(ui, 12), pr.key.top - s(ui, 10), pr.key.right + s(ui, 12), pr.key.bottom + s(ui, 10));
     Gfx::new(hdc).fill_round(&frame, s(ui, BUTTON_RADIUS) as f32, WHITE, Some((148, 163, 184)));
@@ -2180,7 +2253,9 @@ unsafe fn paint_autopilot(ui: &Ui, hdc: HDC, g: &Geom) {
     let a = ar.auto;
     let sch = autopilot::load();
     text(hdc, "Scheduled clean-up", rect(a.left + pad, a.top + s(ui, 16), ar.switch.left - s(ui, 8), a.top + s(ui, 44)), ui.f.section, INK, DT_SINGLELINE | DT_VCENTER);
-    let (status, color) = if !pro {
+    let (status, color) = if !pro && sch.enabled {
+        ("Paused: it needs Pro".to_string(), MUTED)
+    } else if !pro {
         ("Part of Pro".to_string(), MUTED)
     } else if sch.enabled {
         (format!("On, {}. {}", sch.every_text(), sch.next_text(now)), GOOD)
@@ -2207,8 +2282,8 @@ unsafe fn paint_autopilot(ui: &Ui, hdc: HDC, g: &Geom) {
     text(hdc, "Focus mode", rect(f.left + pad, f.top + s(ui, 16), ar.focus.left - s(ui, 8), f.top + s(ui, 44)), ui.f.section, INK, DT_SINGLELINE | DT_VCENTER);
     let state = with_data(|d| d.focus.clone());
     let (status, color) = match (&state, pro) {
-        (_, false) => ("Part of Pro".to_string(), MUTED),
-        (Some(st), true) => (format!("On since {}: {}", unix_local(st.since).rsplit(' ').next().unwrap_or(""), st.summary()), GOOD),
+        (Some(st), _) => (format!("On since {}: {}", unix_local(st.since).rsplit(' ').next().unwrap_or(""), st.summary()), GOOD),
+        (None, false) => ("Part of Pro".to_string(), MUTED),
         (None, true) => ("Off".to_string(), MUTED),
     };
     text(hdc, &status, rect(f.left + pad, f.top + s(ui, 44), ar.focus.left - s(ui, 8), f.top + s(ui, 66)), ui.f.small_bold, color, DT_SINGLELINE | DT_END_ELLIPSIS);
@@ -2252,7 +2327,9 @@ unsafe fn toggle_keep(ui: &Ui) {
 
 fn autopilot_note() -> String {
     let sch = autopilot::load();
-    if crate::license::is_pro() && sch.enabled && !AGENT_ON.with(Cell::get) {
+    if sch.enabled && !crate::license::is_pro() {
+        "Autopilot is paused because it needs Pro. Get Pro to keep it running, or switch it off.".into()
+    } else if sch.enabled && !AGENT_ON.with(Cell::get) {
         "Autopilot runs from the tray watch, which is off right now. Turn on \u{201C}Watch in tray\u{201D} in the sidebar so it can run.".into()
     } else {
         "Everything Autopilot cleans shows up in History & undo. Focus mode only changes speed and power settings, and puts them back.".into()
@@ -2260,10 +2337,11 @@ fn autopilot_note() -> String {
 }
 
 unsafe fn toggle_autopilot(ui: &Ui) {
-    if need_pro(ui, "Autopilot") {
+    let mut sch = autopilot::load();
+    // Switching it off never needs Pro.
+    if !sch.enabled && need_pro(ui, "Autopilot") {
         return;
     }
-    let mut sch = autopilot::load();
     sch.enabled = !sch.enabled;
     autopilot::save(&sch);
     if sch.enabled {
@@ -2307,10 +2385,11 @@ unsafe fn run_autopilot_now(ui: &Ui) {
 }
 
 unsafe fn toggle_focus(ui: &Ui) {
-    if need_pro(ui, "Focus mode") || with_data(|d| std::mem::replace(&mut d.focus_busy, true)) {
+    let on = with_data(|d| d.focus.is_some());
+    // Switching it off never needs Pro.
+    if (!on && need_pro(ui, "Focus mode")) || with_data(|d| std::mem::replace(&mut d.focus_busy, true)) {
         return;
     }
-    let on = with_data(|d| d.focus.is_some());
     InvalidateRect(ui.focus, null(), 0);
     set_note(if on { "Putting everything back\u{2026}" } else { "Looking at what is busy in the background\u{2026}" }, Tone::Muted);
     let target = ui.hwnd as usize;
@@ -2378,11 +2457,17 @@ unsafe fn start_activation(ui: &Ui) {
         return;
     }
     EnableWindow(ui.activate, 0);
-    set_note("Checking your key\u{2026}", Tone::Muted);
+    set_note("Checking your key with Polar\u{2026}", Tone::Muted);
+    let started = std::time::Instant::now();
+    ACTIVATING.with(|a| a.set(Some(started)));
+    SetTimer(ui.hwnd, TIMER_FX, 30, None);
     let target = ui.hwnd as usize;
     let key_box = ui.key as usize;
     std::thread::spawn(move || {
-        let r = crate::license::activate(&key).map_err(|e| capitalise(&e)).map(|lic| {
+        let r = crate::license::activate(&key);
+        let left = std::time::Duration::from_millis(ACTIVATE_MIN_MS).saturating_sub(started.elapsed());
+        std::thread::sleep(left);
+        let r = r.map_err(|e| capitalise(&e)).map(|lic| {
             unsafe { windows_sys::Win32::UI::WindowsAndMessaging::SetWindowTextW(key_box as HWND, wide("").as_ptr()) };
             if lic.email.is_empty() {
                 "\u{2714} Pro is active. Thank you!".to_string()
@@ -2487,12 +2572,19 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         WM_APP_LICENSE => {
             let r = LICENSE_RESULT.lock().unwrap_or_else(|e| e.into_inner()).take();
             if let Some(ui) = ui() {
+                let activated = ACTIVATING.with(|a| a.take()).is_some() && matches!(r, Some(Ok(_)));
                 EnableWindow(ui.activate, 1);
                 EnableWindow(ui.deactivate, 1);
                 match r {
                     Some(Ok(msg)) => set_note(&msg, Tone::Good),
                     Some(Err(e)) => set_note(&e, Tone::Bad),
                     None => {}
+                }
+                if activated && animations_on() {
+                    let (cx, cy, _) = pro_badge(&ui, &geom(&ui));
+                    CONFETTI.with(|c| *c.borrow_mut() = Some(crate::confetti::Burst::new(cx, cy, ui.dpi as f32 / 96.0)));
+                } else {
+                    KillTimer(hwnd, TIMER_FX);
                 }
                 layout(&ui);
                 InvalidateRect(hwnd, null(), 0);
@@ -2620,6 +2712,33 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     if let Some(ui) = ui() {
                         let g = geom(&ui);
                         InvalidateRect(hwnd, &g.circle, 0);
+                    }
+                }
+                TIMER_FX => {
+                    if let Some(ui) = ui() {
+                        if ACTIVATING.with(Cell::get).is_some() {
+                            InvalidateRect(ui.activate, null(), 0);
+                        }
+                        let (running, ended) = CONFETTI.with(|c| {
+                            let mut c = c.borrow_mut();
+                            match c.as_mut() {
+                                Some(b) if !b.done() => {
+                                    b.step();
+                                    (true, false)
+                                }
+                                Some(_) => {
+                                    *c = None;
+                                    (false, true)
+                                }
+                                None => (false, false),
+                            }
+                        });
+                        if running || ended {
+                            InvalidateRect(hwnd, null(), 0);
+                        }
+                        if !running && ACTIVATING.with(Cell::get).is_none() {
+                            KillTimer(hwnd, TIMER_FX);
+                        }
                     }
                 }
                 TIMER_LIVE => {

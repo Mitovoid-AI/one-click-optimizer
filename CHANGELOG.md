@@ -3,6 +3,13 @@
 The release workflow copies the section for each version into the GitHub
 release notes, and the app shows it under "What's new" in the update prompt.
 
+## v0.5.0
+- Pro is on sale: $10 lifetime until 31 January 2027, then $20 lifetime. Pay once, no subscription, and use it on up to 3 PCs
+- What stays free: scanning, the health score, every detail page, fixes one by one and undo. One-click Optimise is free 3 times; cleaning developer junk, Autopilot and Focus mode are Pro
+- Activating Pro shows each step, then a short celebration
+- Focus mode and Autopilot can always be switched off, with or without Pro. Without Pro, the tray switches Focus mode off by itself and puts everything back
+- The website has terms, privacy, refund and open-source license pages
+
 ## v0.4.0
 - Developer junk: finds node_modules, build folders, Python environments and package caches, and shows how much space they take. Projects nobody changed for a month are ticked
 - Autopilot: a daily or weekly clean-up that runs on its own when your PC is idle. By default it closes only Gradle and Kotlin build daemons; dev servers and adb need a switch. A program must have been idle for 30 minutes with nothing connected to it

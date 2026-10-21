@@ -256,6 +256,12 @@ details.method li { margin: 6px 0; font-size: 15px; }
 .lists li { margin: 6px 0; }
 
 /* Pro */
+.price { margin: 0 0 30px; }
+.price-main { margin: 0; font: 800 clamp(56px, 10vw, 88px)/1 var(--display); letter-spacing: -0.03em; color: var(--ink); }
+.price-main strong { font-size: 0.5em; letter-spacing: -0.01em; color: var(--accent); margin-left: 4px; }
+.price-note { margin: 12px 0 0; color: var(--ink-2); max-width: 40em; font-size: 17px; }
+.price-note strong { color: var(--ink); }
+.price .cta { margin-top: 22px; }
 .plans { width: 100%; border-collapse: collapse; background: var(--surface); border-radius: 18px; overflow: hidden; }
 .plans th, .plans td { padding: 13px 18px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
 .plans thead th { font-size: 14px; color: var(--ink-3); font-weight: 650; }
@@ -477,11 +483,19 @@ dialog.menu { box-shadow: var(--dock-shadow); }
 
 <section id="pro">
   <div class="wrap" data-reveal>
-    <h2>Free, with an optional Pro</h2>
-    <p class="intro">Pro is not on sale yet, so every feature is free right now. When it launches it will be a one-time $10: no subscription, no account. Scanning, every detail page and undo stay free for good.</p>
+    <h2>Free, with a lifetime Pro</h2>
+    <p class="intro">Scanning, every detail page and undo stay free for good. Pro unlocks the rest, once, for life.</p>
+    <div class="price">
+      <p class="price-main"><span data-launch>$10</span><span data-after-launch hidden>$20</span> <strong>lifetime</strong></p>
+      <p class="price-note"><strong>Pay once, keep it for life.</strong> No subscription, no monthly fee, no account. Every future update included, on up to 3 PCs.<span data-launch> Launch price until 31 January 2027, then $20 lifetime.</span></p>
+      <div class="cta">
+        <a class="pill light" href="https://buy.polar.sh/polar_cl_8V5m8NArA6JURSM8Ssb7jkqSwR8aZ4Q1n6Nmp0Kor9M">Buy lifetime Pro</a>
+        <span class="cta-meta">Secure checkout by Polar. Then paste your key into the app's Pro page.</span>
+      </div>
+    </div>
     <div class="table-scroll">
       <table class="plans">
-        <thead><tr><th scope="col">Feature</th><th scope="col" class="c">Free</th><th scope="col" class="c">Pro, $10 once</th></tr></thead>
+        <thead><tr><th scope="col">Feature</th><th scope="col" class="c">Free</th><th scope="col" class="c"><span data-launch>Pro, $10 lifetime</span><span data-after-launch hidden>Pro, $20 lifetime</span></th></tr></thead>
         <tbody>
           <tr><td>Scan and fix one by one<span class="what">health score, junk files, startup apps, services, undo</span></td><td class="c free">Yes</td><td class="c pro">Yes</td></tr>
           <tr><td>One-click Optimise<span class="what">in the app and from the tray</span></td><td class="c free">3 times</td><td class="c pro">Unlimited</td></tr>
@@ -491,14 +505,14 @@ dialog.menu { box-shadow: var(--dock-shadow); }
         </tbody>
       </table>
     </div>
-    <p class="fine">Sales are final, so try the free version first. If Pro won't work on your PC, we fix it or refund you. <a href="refund.html">Refund policy</a> &middot; <a href="terms.html">Terms</a></p>
+    <p class="fine">Lifetime means Pro and every update for as long as the app is offered. Sales are final, so try the free version first. If Pro won't work on your PC, we fix it or refund you. <a href="refund.html">Refund policy</a> &middot; <a href="terms.html">Terms</a></p>
   </div>
 </section>
 
 <section id="privacy">
   <div class="wrap" data-reveal>
     <h2>What leaves your PC</h2>
-    <p class="intro">No analytics, no ads, no account. The app asks GitHub whether a new version exists, which like any web request shows GitHub your IP address. Once Pro is on sale, activating a key sends that key and an anonymous PC tag to the store, never your PC name. Scans, history and settings stay in <code>%LOCALAPPDATA%\OneClickOptimizer</code>.</p>
+    <p class="intro">No analytics, no ads, no account. The app asks GitHub whether a new version exists, which like any web request shows GitHub your IP address. Activating Pro sends your key and an anonymous PC tag to the store, Polar, never your PC name. Scans, history and settings stay in <code>%LOCALAPPDATA%\OneClickOptimizer</code>.</p>
     <p class="intro">This website counts page visits with Vercel Web Analytics, which sets no cookies and keeps no personal data. <a href="privacy.html">The full privacy policy</a></p>
   </div>
 </section>
@@ -690,6 +704,13 @@ dialog.menu { box-shadow: var(--dock-shadow); }
     va.defer = true;
     va.src = "/_vercel/insights/script.js";
     document.head.appendChild(va);
+  }
+
+  // The launch price ends on 1 February 2027 (UTC), the same moment as the
+  // Polar discount and the app; after that the page shows the full price.
+  if (Date.now() >= Date.UTC(2027, 1, 1)) {
+    document.querySelectorAll("[data-launch]").forEach(function (el) { el.remove(); });
+    document.querySelectorAll("[data-after-launch]").forEach(function (el) { el.hidden = false; });
   }
 
   // ------------------------------------------------------------ menu

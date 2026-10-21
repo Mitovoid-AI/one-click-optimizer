@@ -113,6 +113,7 @@ extern "system" {
     fn GdipClosePathFigure(p: Gp) -> i32;
     fn GdipFillPath(g: Gp, brush: Gp, path: Gp) -> i32;
     fn GdipDrawPath(g: Gp, pen: Gp, path: Gp) -> i32;
+    fn GdipFillPolygon(g: Gp, brush: Gp, points: *const PointF, count: i32, fill_mode: i32) -> i32;
 }
 
 /// Starts GDI+ once per process.
@@ -209,6 +210,15 @@ impl Gfx {
 
     pub unsafe fn dot(&self, cx: f32, cy: f32, r: f32, color: Rgb) {
         self.circle(cx, cy, r, color, None);
+    }
+
+    /// A filled four-cornered shape (a confetti piece), `alpha` 0..=255.
+    pub unsafe fn quad(&self, pts: [(f32, f32); 4], color: Rgb, alpha: u8) {
+        let p = pts.map(|(x, y)| PointF { x, y });
+        let mut b: Gp = null_mut();
+        GdipCreateSolidFill((argb(color) & 0x00FF_FFFF) | (alpha as u32) << 24, &mut b);
+        GdipFillPolygon(self.0, b, p.as_ptr(), 4, 0);
+        GdipDeleteBrush(b);
     }
 }
 

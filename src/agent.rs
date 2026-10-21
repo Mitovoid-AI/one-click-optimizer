@@ -378,7 +378,14 @@ fn tick() {
         maybe_run_autopilot(hwnd);
     }
     if focus_check && focus::is_on() {
-        std::thread::spawn(focus::refresh);
+        if crate::license::is_pro() {
+            std::thread::spawn(focus::refresh);
+        } else {
+            // Focus mode is Pro. Without it (an update from the free v0.4.0, or a
+            // refunded key) put everything back rather than leave it on.
+            log("focus: no Pro, switching Focus mode off");
+            std::thread::spawn(focus::stop);
+        }
     }
 
     unsafe {
@@ -514,9 +521,9 @@ fn on_autopilot_done(hwnd: HWND) {
     }
 }
 
-/// Turns Focus mode on or off off-thread (Pro only).
+/// Turns Focus mode on or off off-thread (Pro only; switching off never needs Pro).
 fn toggle_focus(hwnd: HWND) {
-    if !crate::license::is_pro() {
+    if !crate::license::is_pro() && !focus::is_on() {
         open_app_with(&["--pro"]);
         return;
     }
@@ -569,7 +576,7 @@ unsafe fn show_menu(hwnd: HWND) {
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
     AppendMenuW(menu, MF_STRING, CMD_PANEL, wide("Quick optimise\u{2026}").as_ptr());
     AppendMenuW(menu, MF_STRING, CMD_OPEN, wide(&format!("Open {APP_NAME}")).as_ptr());
-    let focus_label = if crate::license::is_pro() { "Focus mode" } else { "Focus mode (Pro)" };
+    let focus_label = if crate::license::is_pro() || focus::is_on() { "Focus mode" } else { "Focus mode (Pro)" };
     AppendMenuW(menu, MF_STRING | if focus::is_on() { MF_CHECKED } else { 0 }, CMD_FOCUS, wide(focus_label).as_ptr());
     AppendMenuW(menu, MF_STRING | if autostart { MF_CHECKED } else { 0 }, CMD_AUTOSTART, wide("Start with Windows").as_ptr());
     AppendMenuW(menu, MF_STRING, CMD_UPDATE, wide(&format!("Check for updates (v{})", crate::install::VERSION)).as_ptr());
