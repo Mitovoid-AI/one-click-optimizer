@@ -1,4 +1,8 @@
 {
+  "cleanUrls": true,
+  "redirects": [
+    { "source": "/eula", "destination": "/terms", "permanent": true }
+  ],
   "headers": [
     {
       "source": "/download/(.*)",

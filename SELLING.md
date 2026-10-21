@@ -30,10 +30,12 @@ The name lives in `APP_NAME` (`src/lib.rs`), the window and tray class names, `a
 
 Polar reviews your site before it pays out. It needs:
 - **A landing page:** what the app does, a real screenshot, the price ($10 once), the download link and a contact email.
-- **`/eula`**, from `legal/EULA.txt`.
+- **`/terms`** (and `/eula`), from `legal/EULA.txt`.
 - **`/privacy`**, from `legal/PRIVACY.md`.
 - **`/refund`**, from `legal/REFUND.md`.
 - **Your legal name as the seller.**
+
+`python tools/legal-pages.py` builds all of these, plus `/licenses` and the footer, from `legal/`. Fill in your name, city and email at the top of the script first.
 
 Keep the copy calm and honest. Don't use "your PC is at risk", fake scan numbers or countdowns. Payment providers and Microsoft Defender treat scare-style "optimizers" as unwanted software.
 
@@ -44,6 +46,7 @@ Keep the copy calm and honest. Don't use "your PC is at risk", fake scan numbers
 - **What you keep:** about **$9.00** of a $10 US sale.
 - **Payouts:** Stripe Connect Express to your Indian bank account, in rupees. Expect a small monthly and per-payout fee, plus up to 1% for currency conversion.
 - **Merchant of record:** Polar collects and pays US sales tax and EU/UK VAT for you.
+- **Refunds:** sales are final (`legal/REFUND.md`). The exceptions are a key that won't activate or Pro not working on the buyer's PC (fix it or refund, within 30 days) and refunds the law requires. Polar can still refund an order itself within 60 days to head off a chargeback, even under a no-refund policy. A bank dispute costs $15 even if you win, and too many disputes (about 0.7% of sales) can get the account suspended. So refunding a genuinely unhappy buyer is the cheaper option.
 
 **Before you build on it:**
 - Polar's account review can take up to 14 days and needs your live website.
@@ -100,7 +103,7 @@ An unsigned optimizer that closes programs and edits startup entries looks suspi
 ## 6. Before the first sale
 
 - [ ] Name cleared; site live with EULA, Privacy and Refund pages
-- [ ] Placeholders in `legal/*` filled in; refund days match `REFUND_DAYS` in `src/ui.rs`
+- [ ] Placeholders in `legal/*` filled in; refund wording matches `REFUND_NOTE` in `src/ui.rs` and EULA section 4
 - [ ] Polar approved; in the sandbox: buy, activate, move, refund
 - [ ] Live `POLAR` values filled in; version bumped (v0.4.0); CHANGELOG updated
 - [ ] Ideally, the exe is signed

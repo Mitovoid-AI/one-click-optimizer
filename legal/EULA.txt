@@ -1,7 +1,5 @@
 ONECLICK OPTIMIZER - END USER LICENSE AGREEMENT
 
-DRAFT - fill in every [BRACKET], have it checked, then remove this line.
-
 Last updated: [DATE]
 
 This agreement is between you and [SELLER LEGAL NAME], [CITY], India
@@ -41,9 +39,11 @@ Software you agree to it. If you don't agree, don't install it.
 4. PURCHASES AND REFUNDS
    Pro is sold by our online reseller, Polar Software, Inc. (polar.sh),
    which is the merchant of record for your order and handles
-   payment, taxes and receipts. If you aren't happy, you can get a full
-   refund within 30 days of purchase (see the refund policy at [WEBSITE]/refund).
-   A refunded key stops working.
+   payment, taxes and receipts. Sales are final, so please try the free
+   version first. If your key won't activate or Pro doesn't work on your
+   PC, tell us within 30 days of purchase and we will fix it or refund
+   you. This does not limit any right to a refund that the law gives you.
+   See the refund policy at [WEBSITE]/refund. A refunded key stops working.
 
 5. UPDATES
    The Software checks for new versions and asks before installing one.
@@ -57,8 +57,9 @@ Software you agree to it. If you don't agree, don't install it.
 
 7. OPEN-SOURCE PARTS
    The Software includes open-source components under their own licenses,
-   listed in THIRD-PARTY-NOTICES.txt in the install folder. Nothing in
-   this agreement limits your rights under those licenses.
+   listed in THIRD-PARTY-NOTICES.txt in the install folder and at
+   [WEBSITE]/licenses. Nothing in this agreement limits your rights under
+   those licenses.
 
 8. NO WARRANTY
    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS

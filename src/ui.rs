@@ -2019,7 +2019,7 @@ unsafe fn toggle_agent(ui: &Ui) {
 // ----------------------------------------------------------------- Pro page
 
 /// Must match the refund policy on the website.
-const REFUND_DAYS: u32 = 30;
+const REFUND_NOTE: &str = "Sales are final. Try the free version first.";
 /// Light slate behind the price.
 const PANEL: Rgb = (248, 250, 252);
 
@@ -2115,7 +2115,7 @@ unsafe fn paint_pro(ui: &Ui, hdc: HDC, g: &Geom) {
     text(hdc, "Already bought? Paste your key:", rect(il, pr.buy.bottom + s(ui, 18), ir, pr.buy.bottom + s(ui, 42)), ui.f.small_bold, INK, DT_SINGLELINE | DT_VCENTER);
     let frame = rect(pr.key.left - s(ui, 12), pr.key.top - s(ui, 10), pr.key.right + s(ui, 12), pr.key.bottom + s(ui, 10));
     Gfx::new(hdc).fill_round(&frame, s(ui, BUTTON_RADIUS) as f32, WHITE, Some((148, 163, 184)));
-    text(hdc, &format!("Full refund within {REFUND_DAYS} days."), rect(il, pr.activate.bottom + s(ui, 14), ir, pr.activate.bottom + s(ui, 36)), ui.f.small, MUTED, DT_SINGLELINE | DT_END_ELLIPSIS);
+    text(hdc, REFUND_NOTE, rect(il, pr.activate.bottom + s(ui, 14), ir, pr.activate.bottom + s(ui, 36)), ui.f.small, MUTED, DT_SINGLELINE | DT_END_ELLIPSIS);
 }
 
 // ---------------------------------------------------------- Autopilot page

@@ -1,6 +1,4 @@
-# Privacy policy (draft)
-
-> DRAFT: fill in every [BRACKET] and have it checked before publishing at [WEBSITE]/privacy.
+# Privacy policy
 
 Last updated: [DATE]
 
@@ -8,7 +6,7 @@ OneClick Optimizer is made by [SELLER LEGAL NAME] ("we"). Contact: [CONTACT EMAI
 
 ## The short version
 
-The app works on your PC and keeps what it finds on your PC. It has no analytics, no tracking and no ads, and we never see your files, your scan results or the programs you run.
+The app works on your PC and keeps what it finds on your PC. It has no analytics, no tracking and no ads, and we never see your files, your scan results or the programs you run. This website counts visits without cookies.
 
 ## What the app keeps on your PC
 
@@ -24,9 +22,19 @@ Scan history, the undo history, your settings and (if you bought Pro) your encry
 
 Nothing else is sent. Developer junk, Autopilot and Focus mode work entirely on your PC. You can block the update check with a firewall. The app keeps working, but it won't offer updates.
 
+## This website
+
+| When | What is sent | To | Why |
+|---|---|---|---|
+| Opening a page or downloading the app | A standard web request, which reveals your IP address and browser | Vercel (Vercel Inc.), which hosts the site | To send you the page or the file |
+| Opening a page | The same standard request for the heading font | Google Fonts (Google LLC) | To show the font |
+| Opening a page | The page address, the page you came from, your country, and your browser and device type | Vercel Web Analytics | To count visits |
+
+The website sets no cookies, and the visit counting stores no personal data.
+
 ## When you buy Pro
 
-Checkout is run by Polar (Polar Software, Inc.), our reseller and merchant of record. They collect your email address, payment details, country and IP address to take payment, calculate tax, prevent fraud and email your key. They share with us your email address, country and order details, so that we can support you and refund you. We never receive your card details. Their privacy policy: [POLAR PRIVACY POLICY URL].
+Checkout is run by Polar (Polar Software, Inc.), our reseller and merchant of record. They collect your email address, payment details, country and IP address to take payment, calculate tax, prevent fraud and give you your license key. They share with us your email address, country and order details, so that we can support you and handle refunds. We never receive your card details. Their privacy policy: https://polar.sh/legal/privacy-policy
 
 We keep order records for as long as tax law requires (usually 8 years in India). We use your email address only for your order and support. We send no newsletters unless you ask for them.
 

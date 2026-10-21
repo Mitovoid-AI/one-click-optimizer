@@ -1,13 +1,11 @@
-# Refund policy (draft)
+# Refund policy
 
-> DRAFT: fill in every [BRACKET] before publishing at [WEBSITE]/refund. Keep the number of days the same as `REFUND_DAYS` in `src/ui.rs`.
+Last updated: [DATE]
 
-**Not happy with OneClick Optimizer Pro? Get a full refund within 30 days of purchase. No questions asked.**
+**Sales are final.** The free version does everything marked Free and includes 3 one-click Optimise runs, so please try it before you buy. We don't give refunds for a change of mind.
 
-How to ask:
-1. Reply to your purchase email, or use the "request a refund" link in it.
-2. Or email [CONTACT EMAIL] with the email address you bought with.
+**If Pro doesn't work, we fix it or refund you.** If your key won't activate, or a Pro feature doesn't work on your PC, email [CONTACT EMAIL] within 30 days of purchase. Include the email address you bought with and what went wrong. We'll try to fix it first. If we can't, you get a full refund.
 
-The refund goes back to your original payment method, usually within 5–10 business days. Our reseller, Polar (Polar Software, Inc.), processes it. Once a refund is made, the license key stops working.
+**Your legal rights stay.** If the consumer law where you live gives you a right to cancel or to a refund (for example in the EU, the UK or India), you keep it, and we honour it.
 
-**EU and UK customers.** Pro is digital content that is delivered right away. At checkout you agree to that and acknowledge that this ends the statutory 14-day withdrawal right. Our 30-day refund above still applies to you.
+Refunds are processed by our reseller, Polar (Polar Software, Inc.). The money goes back to your original payment method, usually within 5–10 business days. Once a refund is made, the license key stops working on every PC.
