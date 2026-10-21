@@ -40,6 +40,11 @@ pub enum Action {
         id: String,
         label: String,
     },
+    /// Delete one developer folder found by `devclean` (checked again first).
+    DeleteDevFolder {
+        path: String,
+        label: String,
+    },
 }
 
 impl Action {
@@ -59,6 +64,7 @@ impl Action {
                 if *enabled { "Enable" } else { "Disable" }
             ),
             Action::CleanJunk { label, .. } => format!("Clean {label}"),
+            Action::DeleteDevFolder { label, .. } => format!("Delete {label}"),
         }
     }
 
@@ -68,11 +74,17 @@ impl Action {
             Action::SetServiceStart { .. } => true,
             Action::SetStartupEnabled { location, .. } => !location.is_user(),
             Action::CleanJunk { id, .. } => junk::category(id).is_some_and(|c| c.admin),
+            Action::DeleteDevFolder { .. } => false,
         }
     }
 
     pub fn undoable(&self) -> bool {
-        !matches!(self, Action::KillProcesses { .. } | Action::CleanJunk { .. })
+        !matches!(self, Action::KillProcesses { .. } | Action::CleanJunk { .. } | Action::DeleteDevFolder { .. })
+    }
+
+    /// Deletes files for good (needs a warning before it runs).
+    pub fn deletes_files(&self) -> bool {
+        matches!(self, Action::CleanJunk { .. } | Action::DeleteDevFolder { .. })
     }
 }
 
@@ -235,6 +247,16 @@ fn apply_action(a: &Action, self_pid: u32) -> Outcome {
             }
             Err(e) => Outcome { ok: false, message: e, previous: Previous::Nothing, access_denied: false, freed_bytes: 0 },
         },
+        Action::DeleteDevFolder { path, .. } => match crate::devclean::delete(Path::new(path)) {
+            Ok(r) => {
+                let mut msg = format!("removed {} file(s), {}", r.files, fmt_bytes(r.bytes));
+                if r.skipped > 0 {
+                    msg.push_str(&format!("; {} in use were left alone", r.skipped));
+                }
+                Outcome { freed_bytes: r.bytes, ..Outcome::ok(msg, Previous::Nothing) }
+            }
+            Err(e) => Outcome { ok: false, message: e, previous: Previous::Nothing, access_denied: false, freed_bytes: 0 },
+        },
     }
 }
 
@@ -294,7 +316,7 @@ fn undo_entry(e: &JournalEntry) -> Outcome {
         }
         _ => Outcome {
             ok: false,
-            message: "this change cannot be undone (closed apps start again when you open them; deleted junk is gone)".into(),
+            message: "this change cannot be undone (closed apps start again when you open them; deleted files are gone)".into(),
             previous: Previous::Nothing,
             access_denied: false,
             freed_bytes: 0,

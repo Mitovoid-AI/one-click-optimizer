@@ -4,7 +4,8 @@
 //! Home walks through: Welcome (one big Scan button) -> Scanning (live steps)
 //! -> Results (health score, four summary cards, the plan, one big Optimise
 //! button) -> Optimising -> Done (what was freed). The sidebar has detail pages
-//! for junk files, apps, startup, services and history.
+//! for junk files, developer junk, apps, startup, services, Autopilot & Focus,
+//! history and Pro.
 
 use crate::actions::{self, Action, Journal, JournalEntry, Op, Plan};
 use crate::analyze::{self, AppGroup};
@@ -14,7 +15,7 @@ use crate::model::*;
 use crate::optimize::{self, RunSummary, ScanResult, RUN_STEPS, SCAN_STEPS};
 use crate::paint::*;
 use crate::util::{fmt_bytes, journal_path, wide};
-use crate::{icon, junk, kb, sys, APP_NAME};
+use crate::{autopilot, devclean, focus, icon, junk, kb, popup, sys, APP_NAME};
 use std::cell::{Cell, RefCell};
 use std::ptr::{null, null_mut};
 use std::sync::Mutex;
@@ -73,11 +74,16 @@ const WM_APP_CHECKS: u32 = WM_APP + 3;
 const WM_APP_STEP: u32 = WM_APP + 4;
 const WM_APP_OPTIMIZED: u32 = WM_APP + 5;
 const WM_APP_UPDATE: u32 = WM_APP + 6;
-const WM_APP_UPDATE_DONE: u32 = WM_APP + 7;
+const WM_APP_LICENSE: u32 = WM_APP + 8;
+const WM_APP_DEV: u32 = WM_APP + 9;
+const WM_APP_FOCUS: u32 = WM_APP + 10;
+const WM_APP_AUTOPILOT: u32 = WM_APP + 11;
+
+/// Result of a license activation/deactivation worker.
+static LICENSE_RESULT: Mutex<Option<Result<String, String>>> = Mutex::new(None);
 
 /// A newer release found by the background check, waiting to be offered.
 static PENDING_UPDATE: Mutex<Option<crate::update::Release>> = Mutex::new(None);
-static UPDATE_ERROR: Mutex<Option<String>> = Mutex::new(None);
 
 const LVM_FIRST: u32 = 0x1000;
 const LVM_SETIMAGELIST: u32 = LVM_FIRST + 3;
@@ -121,7 +127,7 @@ const SW_RESTORE: i32 = 9;
 const ERROR_ALREADY_EXISTS: u32 = 183;
 const CW_USEDEFAULT: i32 = i32::MIN;
 
-const ID_NAV0: u16 = 300; // 300..=305
+const ID_NAV0: u16 = 300; // 300..=308
 const ID_RESCAN: u16 = 200;
 const ID_SELECT: u16 = 201;
 const ID_PRIMARY: u16 = 204;
@@ -131,6 +137,18 @@ const ID_OPTIMIZE: u16 = 211;
 const ID_CARD0: u16 = 220; // 220..=223
 const ID_AGAIN: u16 = 230;
 const ID_CHANGES: u16 = 231;
+const ID_BUY: u16 = 240;
+const ID_KEY: u16 = 241;
+const ID_ACTIVATE: u16 = 242;
+const ID_DEACTIVATE: u16 = 243;
+const ID_AP_SWITCH: u16 = 250;
+const ID_AP_DAILY: u16 = 251;
+const ID_AP_WEEKLY: u16 = 252;
+const ID_AP_RUN: u16 = 253;
+const ID_FOCUS: u16 = 254;
+const ID_AP_SERVERS: u16 = 255;
+const ID_AP_KEEP_CLEAR: u16 = 256;
+const ID_KEEP: u16 = 257;
 const TIMER_WATCH: usize = 2;
 const TIMER_SPIN: usize = 3;
 const TIMER_LIVE: usize = 4;
@@ -233,10 +251,13 @@ struct MinMaxInfo {
 enum View {
     Home,
     Junk,
+    Dev,
     Apps,
     Startup,
     Services,
+    Autopilot,
     History,
+    Pro,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -255,13 +276,21 @@ struct Page {
     desc: &'static str,
 }
 
-const PAGES: [Page; 6] = [
+const NAV_N: usize = 9;
+
+const PAGES: [Page; NAV_N] = [
     Page { view: View::Home, glyph: '\u{E80F}', nav: "Home", desc: "" },
     Page {
         view: View::Junk,
         glyph: '\u{E74D}',
         nav: "Junk files",
         desc: "Files your PC doesn't need. Ticked ones are safe; the others are up to you. Deleted files can't be restored.",
+    },
+    Page {
+        view: View::Dev,
+        glyph: '\u{E943}',
+        nav: "Developer junk",
+        desc: "Dependency and build folders your tools make again when needed. Ticked: projects nobody changed for 30+ days.",
     },
     Page {
         view: View::Apps,
@@ -282,12 +311,28 @@ const PAGES: [Page; 6] = [
         desc: "Programs that keep running in the background. \u{201C}When needed\u{201D} means they start only when an app asks for them.",
     },
     Page {
+        view: View::Autopilot,
+        glyph: '\u{E916}',
+        nav: "Autopilot & Focus",
+        desc: "Clean-ups that run on their own, and full power for the apps you're using.",
+    },
+    Page {
         view: View::History,
         glyph: '\u{E81C}',
         nav: "History & undo",
         desc: "Everything OneClick Optimizer changed. Tick a change to put it back the way it was.",
     },
+    Page {
+        view: View::Pro,
+        glyph: '\u{E8D7}',
+        nav: "Pro",
+        desc: "One payment, yours forever. No account, no subscription.",
+    },
 ];
+
+fn nav_index(view: View) -> usize {
+    PAGES.iter().position(|p| p.view == view).unwrap_or(0)
+}
 
 fn page(view: View) -> &'static Page {
     PAGES.iter().find(|p| p.view == view).unwrap_or(&PAGES[0])
@@ -302,6 +347,7 @@ enum Row {
     Startup(usize),
     Service(usize),
     Entry(u64),
+    Dev(usize),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -322,6 +368,12 @@ struct Data {
     done: Option<RunSummary>,
     score_before: Option<u8>,
     live: Option<MemInfo>,
+    /// Developer junk (found when the page is first opened).
+    dev: Option<Vec<devclean::DevItem>>,
+    dev_busy: bool,
+    focus: Option<focus::State>,
+    focus_busy: bool,
+    autopilot_busy: bool,
 }
 
 static DATA: Mutex<Option<Data>> = Mutex::new(None);
@@ -336,7 +388,7 @@ fn with_data<R>(f: impl FnOnce(&mut Data) -> R) -> R {
 #[derive(Clone, Copy)]
 struct Ui {
     hwnd: HWND,
-    nav: [HWND; 6],
+    nav: [HWND; NAV_N],
     rescan: HWND,
     select: HWND,
     primary: HWND,
@@ -347,6 +399,18 @@ struct Ui {
     cards: [HWND; 4],
     again: HWND,
     changes: HWND,
+    buy: HWND,
+    key: HWND,
+    activate: HWND,
+    deactivate: HWND,
+    ap_switch: HWND,
+    ap_daily: HWND,
+    ap_weekly: HWND,
+    ap_run: HWND,
+    focus: HWND,
+    ap_servers: HWND,
+    ap_keep_clear: HWND,
+    keep: HWND,
     dpi: i32,
     f: Fonts,
     logo: HICON,
@@ -376,6 +440,8 @@ thread_local! {
     static NOTE: RefCell<(String, Tone)> = const { RefCell::new((String::new(), Tone::Muted)) };
     static AGENT_ON: Cell<bool> = const { Cell::new(false) };
     static CHECKS_PENDING: Cell<bool> = const { Cell::new(false) };
+    /// History: the closed program picked in the list ("Never close this").
+    static KEEP_PICK: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
 fn ui() -> Option<Ui> {
@@ -514,7 +580,7 @@ unsafe fn create_controls(hwnd: HWND) {
         add_hover(h);
         h
     };
-    let mut nav = [null_mut(); 6];
+    let mut nav = [null_mut(); NAV_N];
     for (i, n) in nav.iter_mut().enumerate() {
         *n = btn(ID_NAV0 + i as u16);
     }
@@ -530,6 +596,21 @@ unsafe fn create_controls(hwnd: HWND) {
     let optimize = btn(ID_OPTIMIZE);
     let again = btn(ID_AGAIN);
     let changes = btn(ID_CHANGES);
+    let buy = btn(ID_BUY);
+    let activate = btn(ID_ACTIVATE);
+    let deactivate = btn(ID_DEACTIVATE);
+    let ap_switch = btn(ID_AP_SWITCH);
+    let ap_daily = btn(ID_AP_DAILY);
+    let ap_weekly = btn(ID_AP_WEEKLY);
+    let ap_run = btn(ID_AP_RUN);
+    let focus = btn(ID_FOCUS);
+    let ap_servers = btn(ID_AP_SERVERS);
+    let ap_keep_clear = btn(ID_AP_KEEP_CLEAR);
+    let keep = btn(ID_KEEP);
+    // License key box (ES_AUTOHSCROLL), with a grey hint while empty.
+    let key = child(hwnd, "EDIT", 0x80 | WS_TABSTOP, ID_KEY);
+    send(key, WM_SETFONT, f.bold as usize, 1);
+    send(key, 0x1501 /* EM_SETCUEBANNER */, 1, wide("Paste your license key here").as_ptr() as isize);
     let list = child(hwnd, "SysListView32", LVS_REPORT | LVS_SHOWSELALWAYS | LVS_SINGLESEL | LVS_NOSORTHEADER | WS_TABSTOP, 103);
 
     SetWindowTheme(list, wide("Explorer").as_ptr(), null());
@@ -558,6 +639,18 @@ unsafe fn create_controls(hwnd: HWND) {
             cards,
             again,
             changes,
+            buy,
+            key,
+            activate,
+            deactivate,
+            ap_switch,
+            ap_daily,
+            ap_weekly,
+            ap_run,
+            focus,
+            ap_servers,
+            ap_keep_clear,
+            keep,
             dpi,
             f,
             logo: icon::app_icon(sc(dpi, 32)),
@@ -631,11 +724,15 @@ fn geom(ui: &Ui) -> Geom {
             g.circle = rect(cx - d / 2, g.sub.bottom + s(ui, 24), cx + d / 2, g.sub.bottom + s(ui, 24) + d);
             g.below = rect(x, g.circle.bottom + s(ui, 24), right, (g.circle.bottom + s(ui, 24) + s(ui, 170)).min(h - s(ui, 8)));
         }
-        _ => {
+        (v, _) => {
             g.title = rect(x, pad, right - s(ui, 320), pad + s(ui, 40));
             g.desc = rect(x, g.title.bottom + s(ui, 2), right, g.title.bottom + s(ui, 26));
             g.bottom = rect(x, h - pad - s(ui, 46), right, h - pad);
             g.note = rect(x, g.bottom.top - s(ui, 50), right, g.bottom.top - s(ui, 8));
+            if matches!(v, View::Pro | View::Autopilot) {
+                // No button row: the note sits at the very bottom.
+                g.note = rect(x, h - pad - s(ui, 44), right, h - pad);
+            }
             let top = g.desc.bottom + s(ui, 18);
             g.card = rect(x, top, right, (g.note.top - s(ui, 6)).max(top + s(ui, 80)));
         }
@@ -656,14 +753,18 @@ unsafe fn layout(ui: &Ui) {
     GetClientRect(ui.hwnd, &mut rc);
     for (i, n) in ui.nav.iter().enumerate() {
         let top = s(ui, 100) + i as i32 * s(ui, 50);
-        place(*n, rect(s(ui, 12), top, g.sidebar - s(ui, 12), top + s(ui, 44)), true);
+        // The Pro page only exists once Pro is on sale.
+        let shown = PAGES[i].view != View::Pro || crate::license::launched();
+        place(*n, rect(s(ui, 12), top, g.sidebar - s(ui, 12), top + s(ui, 44)), shown);
     }
     place(ui.watch, rect(s(ui, 12), rc.bottom - s(ui, 100), g.sidebar - s(ui, 12), rc.bottom - s(ui, 20)), true);
 
     let v = view();
     let hs = home();
     let results = v == View::Home && hs == Home::Results;
-    let page = v != View::Home;
+    let pro_page = v == View::Pro;
+    let ap_page = v == View::Autopilot;
+    let page = v != View::Home && !pro_page && !ap_page;
 
     // Welcome: the big round scan button.
     place(ui.scan, g.circle, v == View::Home && hs == Home::Welcome);
@@ -686,6 +787,28 @@ unsafe fn layout(ui: &Ui) {
         place(ui.rescan, rect(g.right - rw, g.title.top + s(ui, 2), g.right, g.title.top + s(ui, 2) + rh), page);
     }
 
+    // Pro page: buy on the right, key box under it (or "move to another PC").
+    let is_pro = crate::license::launched() && crate::license::load().is_some();
+    let pr = pro_rects(ui, &g);
+    place(ui.buy, pr.buy, pro_page && !is_pro);
+    place(ui.key, pr.key, pro_page && !is_pro);
+    place(ui.activate, pr.activate, pro_page && !is_pro);
+    place(ui.deactivate, pr.deactivate, pro_page && is_pro);
+
+    // Autopilot & Focus page.
+    let ar = ap_rects(ui, &g);
+    let pro = crate::license::is_pro();
+    place(ui.ap_switch, ar.switch, ap_page);
+    place(ui.ap_daily, ar.daily, ap_page && pro);
+    place(ui.ap_weekly, ar.weekly, ap_page && pro);
+    place(ui.ap_run, ar.run, ap_page && pro);
+    place(ui.focus, ar.focus, ap_page);
+    place(ui.ap_servers, ar.servers, ap_page && pro);
+    let kept_any = !crate::settings::load().keep_running.is_empty();
+    place(ui.ap_keep_clear, ar.keep_clear, ap_page && pro && kept_any);
+    let pick = KEEP_PICK.with(|k| k.borrow().is_some());
+    place(ui.keep, rect(g.bottom.left, g.bottom.top, g.bottom.right - s(ui, 300), g.bottom.bottom), v == View::History && pick);
+
     // Done: two buttons centred under the summary.
     let bw = s(ui, 210);
     let by = g.below.bottom - s(ui, 52);
@@ -696,7 +819,7 @@ unsafe fn layout(ui: &Ui) {
     // Lists.
     let list_visible = results || page;
     place(ui.list, rect(g.card.left + 1, g.card.top + 1, g.card.right - 1, g.card.bottom - 1), list_visible);
-    place(ui.select, rect(g.bottom.left, g.bottom.top, g.bottom.left + s(ui, 130), g.bottom.bottom), v == View::Junk);
+    place(ui.select, rect(g.bottom.left, g.bottom.top, g.bottom.left + s(ui, 130), g.bottom.bottom), matches!(v, View::Junk | View::Dev));
     let pw = s(ui, 290);
     place(ui.primary, rect(g.bottom.right - pw, g.bottom.top, g.bottom.right, g.bottom.bottom), page);
 }
@@ -720,10 +843,20 @@ unsafe fn paint(ui: &Ui, hdc: HDC, w: i32, h: i32) {
         (View::Home, Home::Optimising) => paint_progress(ui, hdc, &g, "Optimising\u{2026}", "Hang on, this takes a few seconds. Windows may ask for admin approval once.", &RUN_STEPS),
         (View::Home, Home::Done) => paint_done(ui, hdc, &g),
         (View::Home, Home::Results) => paint_results(ui, hdc, &g),
+        (View::Pro, _) => paint_pro(ui, hdc, &g),
+        (View::Autopilot, _) => paint_autopilot(ui, hdc, &g),
         (v, _) => paint_page(ui, hdc, &g, v),
     }
 
-    if view() != View::Home || home() == Home::Results {
+    if matches!(view(), View::Pro | View::Autopilot) {
+        let (note, tone) = NOTE.with(|n| n.borrow().clone());
+        let color = match tone {
+            Tone::Muted => MUTED,
+            Tone::Good => GOOD,
+            Tone::Bad => BAD,
+        };
+        text(hdc, &note, g.note, if tone == Tone::Muted { ui.f.body } else { ui.f.bold }, color, DT_WORDBREAK | DT_END_ELLIPSIS);
+    } else if view() != View::Home || home() == Home::Results {
         let gfx = Gfx::new(hdc);
         gfx.fill_round(&rect(g.card.left - 1, g.card.top - 1, g.card.right + 1, g.card.bottom + 1), s(ui, 10) as f32, CARD, Some(BORDER));
         drop(gfx);
@@ -764,26 +897,6 @@ unsafe fn paint_welcome(ui: &Ui, hdc: HDC, g: &Geom) {
             level.label()
         );
         text(hdc, &msg, rect(pill.left + s(ui, 40), pill.top, pill.right - s(ui, 12), pill.bottom), ui.f.small_bold, INK, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
-    }
-    // What the scan looks at.
-    let chips: [(char, &str, Rgb); 4] = [
-        ('\u{E9D9}', "Memory hogs", BAD),
-        ('\u{E74D}', "Junk files", WARN),
-        ('\u{E7E8}', "Startup apps", BLUE),
-        ('\u{E95E}', "PC health", ACCENT),
-    ];
-    let gap = s(ui, 12);
-    let avail = g.right - g.x;
-    let cw = ((avail - 3 * gap) / 4).min(s(ui, 170));
-    let total = 4 * cw + 3 * gap;
-    let top = g.below.top + s(ui, 62);
-    let gfx = Gfx::new(hdc);
-    for (i, (glyph, label, color)) in chips.iter().enumerate() {
-        let l = cx - total / 2 + i as i32 * (cw + gap);
-        let r = rect(l, top, l + cw, top + s(ui, 44));
-        gfx.fill_round(&r, s(ui, 10) as f32, CARD, Some(BORDER));
-        text(hdc, &glyph.to_string(), rect(l + s(ui, 14), r.top, l + s(ui, 40), r.bottom), ui.f.icons, *color, DT_SINGLELINE | DT_VCENTER);
-        text(hdc, label, rect(l + s(ui, 42), r.top, r.right - s(ui, 6), r.bottom), ui.f.small_bold, INK, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
     }
 }
 
@@ -836,10 +949,7 @@ unsafe fn paint_done(ui: &Ui, hdc: HDC, g: &Geom) {
     let cx = (g.circle.left + g.circle.right) as f32 / 2.0;
     let cy = (g.circle.top + g.circle.bottom) as f32 / 2.0;
     let r = (g.circle.right - g.circle.left) as f32 / 2.0 - s(ui, 20) as f32;
-    let gfx = Gfx::new(hdc);
-    gfx.circle(cx, cy, r + s(ui, 12) as f32, (220, 252, 231), None);
-    gfx.circle(cx, cy, r, (34, 197, 94), Some((21, 128, 61)));
-    drop(gfx);
+    Gfx::new(hdc).circle(cx, cy, r * 0.62, GOOD, None);
     text(hdc, "\u{E73E}", g.circle, ui.f.icons_big, WHITE, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
     for (i, line) in done.lines().iter().take(4).enumerate() {
         let y = g.below.top + i as i32 * s(ui, 26);
@@ -920,21 +1030,19 @@ unsafe fn on_paint(ui: &Ui) {
     EndPaint(ui.hwnd, &ps);
 }
 
-/// (glyph, value, caption, tint, glyph colour) for the four result cards.
-fn card_info(i: usize) -> (char, String, String, Rgb, Rgb) {
+/// (glyph, value, caption) for the four result cards.
+fn card_info(i: usize) -> (char, String, String) {
     with_data(|d| {
-        let Some(r) = &d.scan else { return ('\u{E9D9}', String::new(), String::new(), BG, MUTED) };
+        let Some(r) = &d.scan else { return ('\u{E9D9}', String::new(), String::new()) };
+        let plural = |n: usize, one: &str, many: &str| if n == 1 { one.to_string() } else { many.to_string() };
         match i {
-            0 => ('\u{E9D9}', fmt_bytes(r.fix_bytes()), format!("{} idle program(s) to close", r.idle_programs()), (254, 226, 226), BAD),
-            1 => ('\u{E74D}', fmt_bytes(r.junk_bytes()), "of junk files to clean".into(), (254, 243, 199), WARN),
-            2 => ('\u{E7E8}', r.startup_items().to_string(), "apps & services start by themselves".into(), (219, 234, 254), BLUE),
-            _ => (
-                '\u{E95E}',
-                r.insights.len().to_string(),
-                if r.insights.is_empty() { "health checks all passed".into() } else { "health warnings & tips".into() },
-                (204, 251, 241),
-                ACCENT,
-            ),
+            0 => {
+                let n = r.idle_programs();
+                ('\u{E9D9}', fmt_bytes(r.fix_bytes()), format!("of memory held by {n} idle {}", plural(n, "program", "programs")))
+            }
+            1 => ('\u{E74D}', fmt_bytes(r.junk_bytes()), "of junk files to clean".into()),
+            2 => ('\u{E7E8}', r.startup_items().to_string(), "apps and services start by themselves".into()),
+            _ => ('\u{E95E}', r.insights.len().to_string(), if r.insights.is_empty() { "health checks all passed".into() } else { "health warnings and tips".into() }),
         }
     })
 }
@@ -949,7 +1057,7 @@ unsafe fn draw_button(ui: &Ui, d: &DrawItem) {
     let v = view();
     let id = d.ctl_id as u16;
 
-    if (ID_NAV0..ID_NAV0 + 6).contains(&id) {
+    if (ID_NAV0..ID_NAV0 + NAV_N as u16).contains(&id) {
         let p = &PAGES[(id - ID_NAV0) as usize];
         let active = p.view == v;
         fill(hdc, &rc, SIDEBAR);
@@ -968,18 +1076,12 @@ unsafe fn draw_button(ui: &Ui, d: &DrawItem) {
         return;
     }
     if (ID_CARD0..ID_CARD0 + 4).contains(&id) {
-        let (glyph, value, caption, tint, gc) = card_info((id - ID_CARD0) as usize);
+        let (glyph, value, caption) = card_info((id - ID_CARD0) as usize);
         fill(hdc, &rc, BG);
-        let gfx = Gfx::new(hdc);
-        gfx.fill_round(&rc, s(ui, 12) as f32, CARD, Some(if hover { ACCENT } else { BORDER }));
-        let r = s(ui, 20) as f32;
-        let (cx, cy) = ((rc.left + s(ui, 16)) as f32 + r, (rc.top + rc.bottom) as f32 / 2.0);
-        gfx.circle(cx, cy, r, tint, None);
-        drop(gfx);
-        let ring = rect((cx - r) as i32, (cy - r) as i32, (cx + r) as i32, (cy + r) as i32);
-        text(hdc, &glyph.to_string(), ring, ui.f.icons, gc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-        let tx = ring.right + s(ui, 12);
-        text(hdc, &value, rect(tx, rc.top + s(ui, 14), rc.right - s(ui, 10), rc.top + s(ui, 50)), ui.f.big, INK, DT_SINGLELINE | DT_END_ELLIPSIS);
+        Gfx::new(hdc).fill_round(&rc, s(ui, 12) as f32, CARD, Some(if hover { (148, 163, 184) } else { BORDER }));
+        let tx = rc.left + s(ui, 18);
+        text(hdc, &glyph.to_string(), rect(rc.right - s(ui, 40), rc.top + s(ui, 14), rc.right - s(ui, 14), rc.top + s(ui, 40)), ui.f.icons, MUTED, DT_SINGLELINE | DT_VCENTER | DT_RIGHT);
+        text(hdc, &value, rect(tx, rc.top + s(ui, 12), rc.right - s(ui, 44), rc.top + s(ui, 48)), ui.f.big, INK, DT_SINGLELINE | DT_END_ELLIPSIS);
         text(hdc, &caption, rect(tx, rc.top + s(ui, 50), rc.right - s(ui, 10), rc.bottom - s(ui, 8)), ui.f.small, MUTED, DT_WORDBREAK | DT_END_ELLIPSIS);
         return;
     }
@@ -990,14 +1092,8 @@ unsafe fn draw_button(ui: &Ui, d: &DrawItem) {
             let gfx = Gfx::new(hdc);
             let cx = (rc.left + rc.right) as f32 / 2.0;
             let cy = (rc.top + rc.bottom) as f32 / 2.0;
-            let outer = (rc.right - rc.left) as f32 / 2.0;
-            gfx.circle(cx, cy, outer - if hover { 0.0 } else { s(ui, 6) as f32 }, if hover { (153, 246, 228) } else { (204, 251, 241) }, None);
-            let inner = outer - s(ui, 18) as f32;
-            if pressed {
-                gfx.circle(cx, cy, inner, ACCENT_DOWN, None);
-            } else {
-                gfx.circle(cx, cy, inner, ACCENT, Some(BLUE));
-            }
+            let inner = (rc.right - rc.left) as f32 / 2.0 - s(ui, 12) as f32;
+            gfx.circle(cx, cy, inner, if pressed { ACCENT_DOWN } else if hover { ACCENT_HOVER } else { ACCENT }, None);
             drop(gfx);
             let mid = cy as i32;
             text(hdc, "\u{E721}", rect(rc.left, mid - s(ui, 66), rc.right, mid - s(ui, 18)), ui.f.icons_big, WHITE, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
@@ -1005,20 +1101,73 @@ unsafe fn draw_button(ui: &Ui, d: &DrawItem) {
             text(hdc, "takes about 5 seconds", rect(rc.left, mid + s(ui, 26), rc.right, mid + s(ui, 48)), ui.f.small, (204, 251, 241), DT_CENTER | DT_SINGLELINE);
         }
         ID_OPTIMIZE => {
-            let sub = OPT_SUB.with(|o| o.borrow().clone());
-            draw_primary(d, CARD, "Optimise now", &sub, &ui.f, Some('\u{E945}'), ui.dpi);
+            let mut sub = OPT_SUB.with(|o| o.borrow().clone());
+            if !crate::license::is_pro() {
+                sub = match crate::license::free_runs_left() {
+                    0 => "unlimited with Pro".to_string(),
+                    1 => format!("{sub} \u{00B7} 1 free run left"),
+                    n => format!("{sub} \u{00B7} {n} free runs left"),
+                };
+            }
+            draw_primary(d, CARD, "Optimise now", &sub, &ui.f, None, ui.dpi);
         }
-        ID_AGAIN => draw_primary(d, BG, "Scan again", "", &ui.f, Some('\u{E72C}'), ui.dpi),
-        ID_CHANGES | ID_RESCAN => {
-            fill(hdc, &rc, BG);
-            let bg = if hover || pressed { (248, 250, 252) } else { CARD };
-            Gfx::new(hdc).fill_round(&rc, s(ui, 10) as f32, bg, Some(if hover { (148, 163, 184) } else { BORDER }));
-            let (glyph, label) = if id == ID_RESCAN { ('\u{E72C}', "Rescan") } else { ('\u{E81C}', "See what changed") };
-            let fg = if disabled { DISABLED } else { INK };
-            let lw = text_width(hdc, label, ui.f.bold) + s(ui, 30);
-            let x0 = (rc.left + rc.right) / 2 - lw / 2;
-            text(hdc, &glyph.to_string(), rect(x0, rc.top, x0 + s(ui, 24), rc.bottom), ui.f.icons, if disabled { DISABLED } else { ACCENT }, DT_SINGLELINE | DT_VCENTER);
-            text(hdc, label, rect(x0 + s(ui, 30), rc.top, rc.right, rc.bottom), ui.f.bold, fg, DT_SINGLELINE | DT_VCENTER);
+        ID_AGAIN => draw_primary(d, BG, "Scan again", "", &ui.f, None, ui.dpi),
+        ID_BUY => draw_primary(d, PANEL, "Buy Pro", "secure checkout by Polar", &ui.f, None, ui.dpi),
+        ID_ACTIVATE => draw_secondary(d, PANEL, "Activate", &ui.f, ui.dpi),
+        ID_DEACTIVATE => draw_secondary(d, CARD, "Move Pro to another PC", &ui.f, ui.dpi),
+        ID_CHANGES => draw_secondary(d, BG, "See what changed", &ui.f, ui.dpi),
+        ID_RESCAN => draw_secondary(d, BG, "Rescan", &ui.f, ui.dpi),
+        ID_AP_SWITCH => {
+            fill(hdc, &rc, CARD);
+            if crate::license::is_pro() {
+                let on = autopilot::load().enabled;
+                text(hdc, if on { "On" } else { "Off" }, rect(rc.left, rc.top, rc.right - s(ui, 52), rc.bottom), ui.f.bold, if on { INK } else { MUTED }, DT_SINGLELINE | DT_VCENTER | DT_RIGHT);
+                draw_switch(hdc, &rc, on, if hover { (148, 163, 184) } else { DISABLED }, ui.dpi);
+            } else {
+                draw_link(d, CARD, "Unlock with Pro", &ui.f, DT_RIGHT);
+            }
+        }
+        ID_AP_DAILY | ID_AP_WEEKLY => {
+            let daily = autopilot::load().every_days <= 1;
+            let chosen = (id == ID_AP_DAILY) == daily;
+            fill(hdc, &rc, CARD);
+            let face = if chosen { (240, 253, 250) } else if hover { (248, 250, 252) } else { CARD };
+            Gfx::new(hdc).fill_round(&rc, s(ui, BUTTON_RADIUS) as f32, face, Some(if chosen { ACCENT } else { BORDER }));
+            let label = if id == ID_AP_DAILY { "Every day" } else { "Every week" };
+            text(hdc, label, rc, if chosen { ui.f.bold } else { ui.f.body }, if chosen { ACCENT_DOWN } else { INK }, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        }
+        ID_AP_RUN => {
+            let busy = with_data(|d| d.autopilot_busy);
+            draw_secondary(d, CARD, if busy { "Cleaning up\u{2026}" } else { "Run now" }, &ui.f, ui.dpi);
+        }
+        ID_AP_SERVERS => {
+            fill(hdc, &rc, CARD);
+            let on = autopilot::load().close_dev_servers;
+            Gfx::new(hdc).fill_round(&rc, s(ui, 10) as f32, if hover { (248, 250, 252) } else { CARD }, Some(BORDER));
+            let tr = rc.right - s(ui, 70);
+            text(hdc, "Also close idle dev servers and adb", rect(rc.left + s(ui, 14), rc.top + s(ui, 4), tr, rc.top + s(ui, 24)), ui.f.bold, INK, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+            let sub = if on { "On: Vite, Next.js, Expo, nodemon and adb too, when nothing is connected to them" } else { "Off: only Gradle and Kotlin build daemons are closed" };
+            text(hdc, sub, rect(rc.left + s(ui, 14), rc.top + s(ui, 24), tr, rc.bottom - s(ui, 4)), ui.f.small, MUTED, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+            draw_switch(hdc, &rect(rc.right - s(ui, 14) - s(ui, 40), rc.top, rc.right - s(ui, 14), rc.bottom), on, DISABLED, ui.dpi);
+        }
+        ID_AP_KEEP_CLEAR => draw_link(d, CARD, "Clear", &ui.f, DT_RIGHT),
+        ID_KEEP => {
+            let label = KEEP_PICK.with(|k| k.borrow().clone()).unwrap_or_default();
+            let kept = crate::settings::load().keep_running.contains(&optimize::keep_key(&label));
+            let text_ = if kept { format!("Let Optimise close {label} again") } else { format!("Never close {label} automatically") };
+            draw_link(d, BG, &text_, &ui.f, DT_END_ELLIPSIS);
+        }
+        ID_FOCUS => {
+            let (on, busy) = with_data(|d| (d.focus.is_some(), d.focus_busy));
+            if !crate::license::is_pro() {
+                draw_secondary(d, CARD, "Unlock with Pro", &ui.f, ui.dpi);
+            } else if busy {
+                draw_secondary(d, CARD, "Working\u{2026}", &ui.f, ui.dpi);
+            } else if on {
+                draw_secondary(d, CARD, "Turn off Focus mode", &ui.f, ui.dpi);
+            } else {
+                draw_primary(d, CARD, "Turn on Focus mode", "", &ui.f, None, ui.dpi);
+            }
         }
         ID_PRIMARY => {
             let (label, _) = PRIMARY.with(|p| p.borrow().clone());
@@ -1033,15 +1182,9 @@ unsafe fn draw_button(ui: &Ui, d: &DrawItem) {
         ID_WATCH => {
             fill(hdc, &rc, SIDEBAR);
             let on = AGENT_ON.with(Cell::get);
-            let gfx = Gfx::new(hdc);
-            gfx.fill_round(&rc, s(ui, 10) as f32, if hover { SIDEBAR_ACTIVE } else { SIDEBAR_HOVER }, None);
-            let (sw, sh) = (s(ui, 40), s(ui, 22));
-            let sx = rc.right - s(ui, 14) - sw;
-            let sy = rc.top + s(ui, 14);
-            gfx.fill_round(&rect(sx, sy, sx + sw, sy + sh), (sh / 2) as f32, if on { ACCENT } else { (71, 85, 105) }, None);
-            let knob = if on { sx + sw - sh / 2 } else { sx + sh / 2 };
-            gfx.dot(knob as f32, (sy + sh / 2) as f32, (sh / 2 - s(ui, 3)) as f32, WHITE);
-            drop(gfx);
+            Gfx::new(hdc).fill_round(&rc, s(ui, 10) as f32, if hover { SIDEBAR_ACTIVE } else { SIDEBAR_HOVER }, None);
+            let sx = rc.right - s(ui, 14) - s(ui, 40);
+            draw_switch(hdc, &rect(sx, rc.top + s(ui, 14), rc.right - s(ui, 14), rc.top + s(ui, 36)), on, (71, 85, 105), ui.dpi);
             text(hdc, "Watch in tray", rect(rc.left + s(ui, 14), rc.top + s(ui, 12), sx - s(ui, 6), rc.top + s(ui, 36)), ui.f.bold, WHITE, DT_SINGLELINE);
             let sub = if on { "On \u{2014} click the tray icon for one-click Optimise" } else { "Off \u{2014} turn on for warnings and one-click Optimise" };
             text(hdc, sub, rect(rc.left + s(ui, 14), rc.top + s(ui, 38), rc.right - s(ui, 10), rc.bottom - s(ui, 6)), ui.f.small, SIDEBAR_MUTED, DT_WORDBREAK);
@@ -1184,11 +1327,41 @@ fn junk_size(j: &junk::Found) -> String {
     }
 }
 
+fn ago(days: Option<u64>) -> String {
+    match days {
+        None => String::new(),
+        Some(0) => "today".into(),
+        Some(1) => "yesterday".into(),
+        Some(d) if d < 60 => format!("{d} days ago"),
+        Some(d) if d < 730 => format!("{} months ago", d / 30),
+        Some(d) => format!("{} years ago", d / 365),
+    }
+}
+
+fn dev_model(items: &[devclean::DevItem]) -> Model {
+    Model {
+        cols: vec![("Folder", 340), ("Size", 100), ("Project changed", 140), ("What it is", 420)],
+        style: (1, 3),
+        rows: items
+            .iter()
+            .enumerate()
+            .map(|(i, it)| {
+                let name = if it.project.is_empty() { it.label.clone() } else { format!("{} \u{203A} {}", it.project, it.label) };
+                mrow(Row::Dev(i), vec![name, fmt_bytes(it.bytes), ago(it.idle_days), it.kind.why().to_string()], it.default_on(), format!("{} \u{2014} {}", it.path.display(), it.kind.why()))
+            })
+            .collect(),
+    }
+}
+
 fn build_model(v: View, d: &Data) -> Model {
     let empty = Model { cols: vec![("", 600)], style: (-1, -1), rows: Vec::new() };
+    if v == View::Dev {
+        return d.dev.as_deref().map_or(empty, dev_model);
+    }
     let Some(scan) = &d.scan else { return empty };
     let snap = &scan.snap;
     match v {
+        View::Pro | View::Autopilot | View::Dev => empty,
         View::Home => {
             let mut rows: Vec<MRow> = scan
                 .recs
@@ -1210,7 +1383,7 @@ fn build_model(v: View, d: &Data) -> Model {
                 let (tag, tone) = match ins.severity {
                     Severity::Problem => ("Problem", BAD),
                     Severity::Warning => ("Warning", WARN),
-                    Severity::Tip => ("Tip", BLUE),
+                    Severity::Tip => ("Tip", INK),
                 };
                 let mut r = mrow(Row::Insight, vec![format!("{tag}: {}", ins.title), String::new(), ins.detail.clone()], false, format!("{}. {}", ins.title, ins.detail));
                 r.checkable = false;
@@ -1361,6 +1534,13 @@ fn build_model(v: View, d: &Data) -> Model {
 }
 
 fn default_note(v: View, empty: bool, scanned: bool) -> &'static str {
+    if v == View::Dev {
+        return match (scanned, empty) {
+            (false, _) => "Looking for developer folders on your drives\u{2026} This takes up to half a minute.",
+            (true, true) => "No developer junk found: no node_modules, build folders or package caches worth cleaning.",
+            (true, false) => "Click a row to see where it is. Folders come back when you install or build again; package caches are never ticked for you.",
+        };
+    }
     if !scanned {
         return "Press Scan now on Home first.";
     }
@@ -1376,10 +1556,32 @@ fn default_note(v: View, empty: bool, scanned: bool) -> &'static str {
 
 unsafe fn render_list(ui: &Ui) {
     let v = view();
+    if v == View::Pro {
+        let hint = if crate::license::load().is_some() {
+            "Your key is re-checked about every two weeks. Being offline never turns Pro off."
+        } else {
+            "Only your license key and an anonymous PC tag go to the store, to check the key. Nothing else about your PC is sent."
+        };
+        set_note(hint, Tone::Muted);
+        return;
+    }
+    if v == View::Autopilot {
+        // The tray can switch Focus mode too: read its current state.
+        with_data(|d| {
+            if !d.focus_busy {
+                d.focus = focus::load();
+            }
+        });
+        set_note(&autopilot_note(), Tone::Muted);
+        return;
+    }
     if v == View::Home && home() != Home::Results {
         return;
     }
-    let (model, scanned) = with_data(|d| (build_model(v, d), d.scan.is_some()));
+    if v == View::Dev && with_data(|d| d.dev.is_none() && !d.dev_busy) {
+        start_dev_scan(ui);
+    }
+    let (model, scanned) = with_data(|d| (build_model(v, d), if v == View::Dev { d.dev.is_some() } else { d.scan.is_some() }));
     send(ui.list, WM_SETREDRAW, 0, 0);
     ROWS.with(|r| r.borrow_mut().clear());
     lv_reset(ui.list, &model.cols, ui.dpi);
@@ -1417,10 +1619,11 @@ unsafe fn update_checks(ui: &Ui) {
                 Some(Row::Fix(k)) => ram += d.scan.as_ref().and_then(|s| s.recs.get(*k)).map_or(0, |r| r.saves_bytes),
                 Some(Row::Junk(k)) => disk += d.scan.as_ref().and_then(|s| s.junk.get(*k)).map_or(0, |j| j.bytes),
                 Some(Row::App(k)) => ram += d.apps.get(*k).map_or(0, |g| g.private_bytes),
+                Some(Row::Dev(k)) => disk += d.dev.as_ref().and_then(|v| v.get(*k)).map_or(0, |it| it.bytes),
                 _ => {}
             }
         }
-        (ram, disk, d.scan.is_some())
+        (ram, disk, if v == View::Dev { d.dev.is_some() } else { d.scan.is_some() })
     });
     let bytes = ram + disk;
     let busy = BUSY.with(Cell::get);
@@ -1438,12 +1641,15 @@ unsafe fn update_checks(ui: &Ui) {
 
     let (label, enabled) = if busy {
         ("Working\u{2026}".to_string(), false)
+    } else if !scanned && v == View::Dev {
+        ("Looking for folders\u{2026}".to_string(), false)
     } else if !scanned {
         ("Scan first (Home)".to_string(), false)
     } else if n == 0 {
         (
             match v {
                 View::Junk => "Tick junk to clean",
+                View::Dev => "Tick folders to clean",
                 View::Apps => "Tick apps to close",
                 View::Startup => "Tick apps to switch",
                 View::Services => "Tick services to change",
@@ -1456,6 +1662,8 @@ unsafe fn update_checks(ui: &Ui) {
         let label = match v {
             View::Junk if bytes > 0 => format!("Clean {}", fmt_bytes(bytes)),
             View::Junk => format!("Clean {n} {}", plural(n, "category", "categories")),
+            View::Dev if !crate::license::is_pro() => format!("Clean {} with Pro", fmt_bytes(bytes)),
+            View::Dev => format!("Delete {n} {} ({})", plural(n, "folder", "folders"), fmt_bytes(bytes)),
             View::Apps => format!("Close {n} {} ({})", plural(n, "app", "apps"), fmt_bytes(bytes)),
             View::Startup => format!("Switch {n} on/off"),
             View::Services => format!("Start {n} only when needed"),
@@ -1532,11 +1740,20 @@ fn collect_ops(checked: &[usize]) -> (Vec<Op>, Vec<String>) {
     with_data(|d| {
         let mut ops = Vec::new();
         let mut skipped = Vec::new();
+        for &i in checked {
+            if let Some(Row::Dev(k)) = rows.get(i) {
+                if let Some(it) = d.dev.as_ref().and_then(|v| v.get(*k)) {
+                    let label = if it.project.is_empty() { it.label.clone() } else { format!("{} in {}", it.label, it.project) };
+                    ops.push(Op::Apply { action: Action::DeleteDevFolder { path: it.path.to_string_lossy().to_string(), label } });
+                }
+            }
+        }
         let Some(scan) = &d.scan else { return (ops, skipped) };
         let snap = &scan.snap;
         for &i in checked {
             let Some(row) = rows.get(i) else { continue };
             match *row {
+                Row::Dev(_) => {}
                 Row::Fix(k) => ops.push(Op::Apply { action: scan.recs[k].action.clone() }),
                 Row::Junk(k) => ops.push(optimize::junk_op(&scan.junk[k])),
                 Row::Insight => {}
@@ -1604,7 +1821,8 @@ fn op_needs_admin(op: &Op) -> bool {
 unsafe fn confirm(ui: &Ui, ops: &[Op], skipped: &[String], title: &str) -> bool {
     let admin = ops.iter().any(op_needs_admin);
     let kills = ops.iter().any(|op| matches!(op, Op::Apply { action: Action::KillProcesses { .. } }));
-    let deletes = ops.iter().any(|op| matches!(op, Op::Apply { action: Action::CleanJunk { .. } }));
+    let deletes = ops.iter().any(|op| matches!(op, Op::Apply { action } if action.deletes_files()));
+    let dev = ops.iter().any(|op| matches!(op, Op::Apply { action: Action::DeleteDevFolder { .. } }));
     let mut msg = format!("{title}\n\n");
     for op in ops.iter().take(14) {
         msg.push_str(&format!("\u{2022} {}\n", describe_op(op)));
@@ -1618,7 +1836,9 @@ unsafe fn confirm(ui: &Ui, ops: &[Op], skipped: &[String], title: &str) -> bool 
     if kills {
         msg.push_str("\nApps that are closed lose unsaved work.");
     }
-    if deletes {
+    if dev {
+        msg.push_str("\nDeleted folders can't be restored; npm install, cargo build and the like make them again when you need them.");
+    } else if deletes {
         msg.push_str("\nDeleted junk files can't be restored.");
     }
     if admin {
@@ -1631,6 +1851,14 @@ unsafe fn confirm(ui: &Ui, ops: &[Op], skipped: &[String], title: &str) -> bool 
 /// The one-click button on Home.
 unsafe fn on_optimize(ui: &Ui) {
     if BUSY.with(Cell::get) {
+        return;
+    }
+    if !crate::license::can_one_click() {
+        switch_view(ui, View::Pro);
+        set_note(
+            "You've used your 3 free one-click runs. Get Pro for unlimited one-click Optimise \u{2014} or keep fixing things one by one on the other pages, which stays free.",
+            Tone::Muted,
+        );
         return;
     }
     let checked = lv_checked(ui.list);
@@ -1658,6 +1886,7 @@ unsafe fn on_optimize(ui: &Ui) {
             .sum()
     });
     with_data(|d| d.score_before = d.scan.as_ref().map(|s| s.score));
+    crate::license::use_free_run();
     BUSY.with(|b| b.set(true));
     HOME.with(|h| h.set(Home::Optimising));
     STEP.with(|s| s.set(0));
@@ -1675,9 +1904,22 @@ unsafe fn on_optimize(ui: &Ui) {
     });
 }
 
+/// Shows the Pro page instead when `what` needs Pro. Returns true if it did.
+unsafe fn need_pro(ui: &Ui, what: &str) -> bool {
+    if crate::license::is_pro() {
+        return false;
+    }
+    switch_view(ui, View::Pro);
+    set_note(&format!("{what} is part of Pro. Everything else stays free."), Tone::Muted);
+    true
+}
+
 /// The main button on the detail pages.
 unsafe fn on_apply(ui: &Ui) {
     if BUSY.with(Cell::get) {
+        return;
+    }
+    if view() == View::Dev && need_pro(ui, "Cleaning developer junk") {
         return;
     }
     let checked = lv_checked(ui.list);
@@ -1714,7 +1956,7 @@ unsafe fn on_apply(ui: &Ui) {
         let failed: Vec<String> = new.iter().filter(|e| !e.ok).map(|e| e.message.clone()).collect();
         let mut status = format!("\u{2714} Done: {ok} change(s) applied.");
         if freed > 0 {
-            status = format!("\u{2714} Done: {ok} change(s) applied, {} of junk deleted.", fmt_bytes(freed));
+            status = format!("\u{2714} Done: {ok} change(s) applied, {} deleted.", fmt_bytes(freed));
         }
         if !failed.is_empty() {
             status = format!("{ok} change(s) applied, {} didn't work ({}).", failed.len(), failed[0]);
@@ -1728,6 +1970,7 @@ unsafe fn on_apply(ui: &Ui) {
 
 unsafe fn switch_view(ui: &Ui, v: View) {
     VIEW.with(|x| x.set(v));
+    KEEP_PICK.with(|k| *k.borrow_mut() = None);
     for n in ui.nav {
         InvalidateRect(n, null(), 0);
     }
@@ -1773,6 +2016,400 @@ unsafe fn toggle_agent(ui: &Ui) {
     SetTimer(ui.hwnd, TIMER_WATCH, 800, None);
 }
 
+// ----------------------------------------------------------------- Pro page
+
+/// Must match the refund policy on the website.
+const REFUND_DAYS: u32 = 30;
+/// Light slate behind the price.
+const PANEL: Rgb = (248, 250, 252);
+
+struct ProRects {
+    left: RECT,
+    right: RECT,
+    buy: RECT,
+    key: RECT,
+    activate: RECT,
+    deactivate: RECT,
+}
+
+fn pro_rects(ui: &Ui, g: &Geom) -> ProRects {
+    let c = g.card;
+    let mid = c.left + (c.right - c.left) * 56 / 100;
+    let right = rect(mid + s(ui, 8), c.top + s(ui, 20), c.right - s(ui, 20), c.bottom - s(ui, 20));
+    let (il, ir, top) = (right.left + s(ui, 24), right.right - s(ui, 24), right.top + s(ui, 20));
+    let buy = rect(il, top + s(ui, 104), ir, top + s(ui, 160));
+    let cx = (c.left + c.right) / 2;
+    ProRects {
+        left: rect(c.left + s(ui, 28), c.top + s(ui, 24), mid - s(ui, 24), c.bottom - s(ui, 20)),
+        key: rect(il + s(ui, 12), buy.bottom + s(ui, 56), ir - s(ui, 12), buy.bottom + s(ui, 80)),
+        activate: rect(il, buy.bottom + s(ui, 102), ir, buy.bottom + s(ui, 144)),
+        deactivate: rect(cx - s(ui, 130), c.top + s(ui, 250), cx + s(ui, 130), c.top + s(ui, 294)),
+        buy,
+        right,
+    }
+}
+
+/// (feature, what it covers, free, Pro) for the comparison table.
+const PRO_ROWS: [(&str, &str, &str, &str); 6] = [
+    ("Scan and fix", "health score, junk, startup, undo", "Yes", "Yes"),
+    ("One-click Optimise", "in the app and from the tray", "3 times", "Unlimited"),
+    ("Developer junk", "node_modules, build folders, caches", "See it", "Clean it"),
+    ("Autopilot", "clean-ups that run on their own", "\u{2014}", "Yes"),
+    ("Focus mode", "full power for the apps you use", "\u{2014}", "Yes"),
+    ("Updates", "every new version", "Yes", "Yes"),
+];
+
+unsafe fn paint_pro(ui: &Ui, hdc: HDC, g: &Geom) {
+    text(hdc, "OneClick Optimizer Pro", g.title, ui.f.title, INK, DT_SINGLELINE | DT_VCENTER);
+    text(hdc, page(View::Pro).desc, g.desc, ui.f.body, MUTED, DT_SINGLELINE | DT_END_ELLIPSIS);
+    Gfx::new(hdc).fill_round(&rect(g.card.left - 1, g.card.top - 1, g.card.right + 1, g.card.bottom + 1), s(ui, 12) as f32, CARD, Some(BORDER));
+    let pr = pro_rects(ui, g);
+    let c = g.card;
+
+    if let Some(lic) = crate::license::load() {
+        let head = rect(c.left, c.top + s(ui, 64), c.right, c.top + s(ui, 104));
+        text(hdc, "Pro is active on this PC", head, ui.f.title, INK, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
+        let who = if lic.email.is_empty() { format!("License {}", lic.masked_key()) } else { format!("License {}  \u{00B7}  {}", lic.masked_key(), lic.email) };
+        let line = |y: i32, t: &str, font, color| text(hdc, t, rect(c.left + s(ui, 24), y, c.right - s(ui, 24), y + s(ui, 24)), font, color, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        line(head.bottom + s(ui, 6), &who, ui.f.body, MUTED);
+        line(head.bottom + s(ui, 44), "Unlimited one-click Optimise, developer junk cleaning, Autopilot and Focus mode are yours.", ui.f.body, INK);
+        line(head.bottom + s(ui, 70), "Thank you for supporting an independent developer.", ui.f.body, INK);
+        line(pr.deactivate.bottom + s(ui, 12), "Moving to a new PC? Free this one first, then activate the same key there.", ui.f.small, MUTED);
+        return;
+    }
+
+    // Free vs Pro, side by side.
+    let l = pr.left;
+    let colw = s(ui, 76);
+    let (free_x, pro_x) = (l.right - 2 * colw, l.right - colw);
+    text(hdc, "What you get", rect(l.left, l.top, free_x, l.top + s(ui, 28)), ui.f.section, INK, DT_SINGLELINE | DT_VCENTER);
+    text(hdc, "Free", rect(free_x, l.top, pro_x, l.top + s(ui, 28)), ui.f.small_bold, MUTED, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+    text(hdc, "Pro", rect(pro_x, l.top, l.right, l.top + s(ui, 28)), ui.f.small_bold, ACCENT_DOWN, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+    let row_h = s(ui, 50);
+    let mut y = l.top + s(ui, 36);
+    for (feature, covers, free, pro) in PRO_ROWS {
+        fill(hdc, &rect(l.left, y, l.right, y + 1), BORDER);
+        text(hdc, feature, rect(l.left, y + s(ui, 7), free_x - s(ui, 8), y + s(ui, 28)), ui.f.bold, INK, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+        text(hdc, covers, rect(l.left, y + s(ui, 27), free_x - s(ui, 8), y + s(ui, 46)), ui.f.small, MUTED, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+        text(hdc, free, rect(free_x, y, pro_x, y + row_h), ui.f.body, MUTED, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+        text(hdc, pro, rect(pro_x, y, l.right, y + row_h), ui.f.bold, INK, DT_SINGLELINE | DT_VCENTER | DT_CENTER);
+        y += row_h;
+    }
+    fill(hdc, &rect(l.left, y, l.right, y + 1), BORDER);
+    let free = match crate::license::free_runs_left() {
+        0 => "Your 3 free one-click runs are used. Everything marked Free keeps working.".to_string(),
+        1 => "You have 1 free one-click run left.".to_string(),
+        n => format!("You have {n} free one-click runs left."),
+    };
+    text(hdc, &free, rect(l.left, y + s(ui, 12), l.right, l.bottom), ui.f.small, MUTED, DT_WORDBREAK);
+
+    // Price and checkout.
+    let r = pr.right;
+    Gfx::new(hdc).fill_round(&r, s(ui, 12) as f32, PANEL, None);
+    let (il, ir, top) = (r.left + s(ui, 24), r.right - s(ui, 24), r.top + s(ui, 20));
+    let price = crate::license::store().map_or(crate::license::PRICE, |st| st.price);
+    text(hdc, price, rect(il, top, ir, top + s(ui, 56)), ui.f.huge, INK, DT_SINGLELINE | DT_VCENTER);
+    let pw = text_width(hdc, price, ui.f.huge);
+    text(hdc, "one payment", rect(il + pw + s(ui, 10), top + s(ui, 10), ir, top + s(ui, 52)), ui.f.section, MUTED, DT_SINGLELINE | DT_VCENTER);
+    text(hdc, "No subscription, no account. Use it on up to 3 PCs; your key arrives by email.", rect(il, top + s(ui, 58), ir, pr.buy.top - s(ui, 4)), ui.f.small, MUTED, DT_WORDBREAK | DT_END_ELLIPSIS);
+    text(hdc, "Already bought? Paste your key:", rect(il, pr.buy.bottom + s(ui, 18), ir, pr.buy.bottom + s(ui, 42)), ui.f.small_bold, INK, DT_SINGLELINE | DT_VCENTER);
+    let frame = rect(pr.key.left - s(ui, 12), pr.key.top - s(ui, 10), pr.key.right + s(ui, 12), pr.key.bottom + s(ui, 10));
+    Gfx::new(hdc).fill_round(&frame, s(ui, BUTTON_RADIUS) as f32, WHITE, Some((148, 163, 184)));
+    text(hdc, &format!("Full refund within {REFUND_DAYS} days."), rect(il, pr.activate.bottom + s(ui, 14), ir, pr.activate.bottom + s(ui, 36)), ui.f.small, MUTED, DT_SINGLELINE | DT_END_ELLIPSIS);
+}
+
+// ---------------------------------------------------------- Autopilot page
+
+struct ApRects {
+    auto: RECT,
+    focus_card: RECT,
+    switch: RECT,
+    servers: RECT,
+    /// "Never closed: ..." line, with its Clear link at the right.
+    kept: RECT,
+    keep_clear: RECT,
+    daily: RECT,
+    weekly: RECT,
+    run: RECT,
+    focus: RECT,
+}
+
+fn ap_rects(ui: &Ui, g: &Geom) -> ApRects {
+    let c = g.card;
+    let gap = s(ui, 16);
+    let focus_card = rect(c.left, c.bottom - s(ui, 164), c.right, c.bottom);
+    let auto = rect(c.left, c.top, c.right, focus_card.top - gap);
+    let pad = s(ui, 24);
+    // From the bottom up: buttons, last run, kept programs, the dev-server switch.
+    let by = auto.bottom - pad - s(ui, 40);
+    let kept_h = if crate::settings::load().keep_running.is_empty() { 0 } else { s(ui, 26) };
+    let kept = rect(auto.left + pad, by - s(ui, 30) - kept_h, auto.right - pad, by - s(ui, 30) - kept_h + s(ui, 22));
+    let servers_top = by - s(ui, 30) - kept_h - s(ui, 54);
+    ApRects {
+        switch: rect(auto.right - pad - s(ui, 170), auto.top + s(ui, 16), auto.right - pad, auto.top + s(ui, 48)),
+        servers: rect(auto.left + pad, servers_top, auto.right - pad, servers_top + s(ui, 46)),
+        keep_clear: rect(kept.right - s(ui, 60), kept.top, kept.right, kept.bottom),
+        kept,
+        daily: rect(auto.left + pad, by, auto.left + pad + s(ui, 118), by + s(ui, 40)),
+        weekly: rect(auto.left + pad + s(ui, 126), by, auto.left + pad + s(ui, 244), by + s(ui, 40)),
+        run: rect(auto.right - pad - s(ui, 140), by, auto.right - pad, by + s(ui, 40)),
+        focus: rect(focus_card.right - pad - s(ui, 220), focus_card.top + s(ui, 16), focus_card.right - pad, focus_card.top + s(ui, 56)),
+        auto,
+        focus_card,
+    }
+}
+
+fn unix_local(t: u64) -> String {
+    sys::mem::fmt_local((t + 11_644_473_600) * crate::util::FT_PER_SEC)
+}
+
+unsafe fn paint_autopilot(ui: &Ui, hdc: HDC, g: &Geom) {
+    let p = page(View::Autopilot);
+    text(hdc, p.nav, g.title, ui.f.title, INK, DT_SINGLELINE | DT_VCENTER);
+    text(hdc, p.desc, g.desc, ui.f.body, MUTED, DT_SINGLELINE | DT_END_ELLIPSIS);
+    let ar = ap_rects(ui, g);
+    let gfx = Gfx::new(hdc);
+    gfx.fill_round(&ar.auto, s(ui, 12) as f32, CARD, Some(BORDER));
+    gfx.fill_round(&ar.focus_card, s(ui, 12) as f32, CARD, Some(BORDER));
+    drop(gfx);
+    let pad = s(ui, 24);
+    let pro = crate::license::is_pro();
+    let now = crate::util::unix_now();
+
+    // Scheduled clean-up.
+    let a = ar.auto;
+    let sch = autopilot::load();
+    text(hdc, "Scheduled clean-up", rect(a.left + pad, a.top + s(ui, 16), ar.switch.left - s(ui, 8), a.top + s(ui, 44)), ui.f.section, INK, DT_SINGLELINE | DT_VCENTER);
+    let (status, color) = if !pro {
+        ("Part of Pro".to_string(), MUTED)
+    } else if sch.enabled {
+        (format!("On, {}. {}", sch.every_text(), sch.next_text(now)), GOOD)
+    } else {
+        ("Off".to_string(), MUTED)
+    };
+    text(hdc, &status, rect(a.left + pad, a.top + s(ui, 44), a.right - pad, a.top + s(ui, 66)), ui.f.small_bold, color, DT_SINGLELINE | DT_END_ELLIPSIS);
+    let body = "Deletes temp files older than 7 days and crash dumps, and closes Gradle and Kotlin build daemons that sat idle for 30 minutes with nothing connected to them. It runs while your PC is idle, never closes apps you use and never asks for admin rights.";
+    let by = ar.run.top;
+    let body_bottom = if pro { ar.servers.top - s(ui, 8) } else { by - s(ui, 36) };
+    text(hdc, body, rect(a.left + pad, a.top + s(ui, 76), a.right - pad, body_bottom), ui.f.body, INK, DT_WORDBREAK | DT_END_ELLIPSIS);
+    let keep = crate::settings::load().keep_running;
+    if pro && !keep.is_empty() {
+        let names = keep.iter().map(|k| capitalise(k)).collect::<Vec<_>>().join(", ");
+        text(hdc, &format!("Never closed automatically: {names}"), rect(ar.kept.left, ar.kept.top, ar.keep_clear.left - s(ui, 8), ar.kept.bottom), ui.f.small, INK, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+    }
+    if pro {
+        let last = if sch.last_run == 0 { "Hasn't run yet.".to_string() } else { format!("Last clean-up {}: {}.", unix_local(sch.last_run), sch.last_result.trim_end_matches('.')) };
+        text(hdc, &last, rect(a.left + pad, by - s(ui, 30), a.right - pad, by - s(ui, 8)), ui.f.small, MUTED, DT_SINGLELINE | DT_END_ELLIPSIS);
+    }
+
+    // Focus mode.
+    let f = ar.focus_card;
+    text(hdc, "Focus mode", rect(f.left + pad, f.top + s(ui, 16), ar.focus.left - s(ui, 8), f.top + s(ui, 44)), ui.f.section, INK, DT_SINGLELINE | DT_VCENTER);
+    let state = with_data(|d| d.focus.clone());
+    let (status, color) = match (&state, pro) {
+        (_, false) => ("Part of Pro".to_string(), MUTED),
+        (Some(st), true) => (format!("On since {}: {}", unix_local(st.since).rsplit(' ').next().unwrap_or(""), st.summary()), GOOD),
+        (None, true) => ("Off".to_string(), MUTED),
+    };
+    text(hdc, &status, rect(f.left + pad, f.top + s(ui, 44), ar.focus.left - s(ui, 8), f.top + s(ui, 66)), ui.f.small_bold, color, DT_SINGLELINE | DT_END_ELLIPSIS);
+    let body = "Busy background programs (sync tools, updaters, launchers) go into Windows' efficiency mode and the power mode switches to Best performance. Apps on screen, everything they started, calls and music keep full speed. Turning it off puts everything back.";
+    text(hdc, body, rect(f.left + pad, f.top + s(ui, 76), f.right - pad, f.bottom - s(ui, 14)), ui.f.body, INK, DT_WORDBREAK | DT_END_ELLIPSIS);
+}
+
+/// "2 Gradle daemons" -> "Gradle daemon": the name shown for keeping it running.
+fn keep_display(label: &str) -> String {
+    let key = optimize::keep_key(label);
+    // Keep the original capitalisation of the remaining words.
+    let words: Vec<&str> = label.split(' ').skip_while(|w| w.chars().all(|c| c.is_ascii_digit())).collect();
+    let shown = words.join(" ").replace("daemons", "daemon").replace("servers", "server");
+    if optimize::keep_key(&shown) == key {
+        shown
+    } else {
+        capitalise(&key)
+    }
+}
+
+/// History: never close the picked program automatically (or allow it again).
+unsafe fn toggle_keep(ui: &Ui) {
+    let Some(label) = KEEP_PICK.with(|k| k.borrow().clone()) else { return };
+    let key = optimize::keep_key(&label);
+    let mut now_kept = false;
+    crate::settings::update(|x| {
+        if let Some(i) = x.keep_running.iter().position(|k| *k == key) {
+            x.keep_running.remove(i);
+        } else {
+            x.keep_running.push(key.clone());
+            now_kept = true;
+        }
+    });
+    if now_kept {
+        set_note(&format!("{label} will be left running: one-click Optimise won't tick it and Autopilot won't close it. Undo this on the Autopilot & Focus page."), Tone::Good);
+    } else {
+        set_note(&format!("{label} can be closed by Optimise and Autopilot again when it sits idle."), Tone::Muted);
+    }
+    InvalidateRect(ui.keep, null(), 0);
+}
+
+fn autopilot_note() -> String {
+    let sch = autopilot::load();
+    if crate::license::is_pro() && sch.enabled && !AGENT_ON.with(Cell::get) {
+        "Autopilot runs from the tray watch, which is off right now. Turn on \u{201C}Watch in tray\u{201D} in the sidebar so it can run.".into()
+    } else {
+        "Everything Autopilot cleans shows up in History & undo. Focus mode only changes speed and power settings, and puts them back.".into()
+    }
+}
+
+unsafe fn toggle_autopilot(ui: &Ui) {
+    if need_pro(ui, "Autopilot") {
+        return;
+    }
+    let mut sch = autopilot::load();
+    sch.enabled = !sch.enabled;
+    autopilot::save(&sch);
+    if sch.enabled {
+        // It runs from the tray watch: make sure that is running and starts with
+        // Windows (not in sandboxed test runs, which must not touch real settings).
+        let sandbox = std::env::var_os("OCO_DATA_DIR").is_some();
+        if let Ok(exe) = std::env::current_exe() {
+            if FindWindowW(wide(AGENT_CLASS).as_ptr(), null()).is_null() {
+                let _ = std::process::Command::new(&exe).arg("agent").spawn();
+            }
+            if !sandbox {
+                let _ = sys::startup::set_agent_autostart(true, &exe.to_string_lossy());
+            }
+        }
+        set_note("Autopilot is on. It runs from the tray watch, which starts with Windows.", Tone::Good);
+        SetTimer(ui.hwnd, TIMER_WATCH, 800, None);
+    } else {
+        set_note("Autopilot is off.", Tone::Muted);
+    }
+    for h in [ui.ap_switch, ui.ap_daily, ui.ap_weekly, ui.ap_run] {
+        InvalidateRect(h, null(), 0);
+    }
+    InvalidateRect(ui.hwnd, null(), 0);
+}
+
+unsafe fn run_autopilot_now(ui: &Ui) {
+    if need_pro(ui, "Autopilot") || with_data(|d| std::mem::replace(&mut d.autopilot_busy, true)) {
+        return;
+    }
+    InvalidateRect(ui.ap_run, null(), 0);
+    set_note("Cleaning up\u{2026}", Tone::Muted);
+    let target = ui.hwnd as usize;
+    std::thread::spawn(move || {
+        let rep = autopilot::run_now();
+        with_data(|d| {
+            d.autopilot_busy = false;
+            d.status = Some((format!("\u{2714} {}.", rep.text()), rep.failed == 0));
+        });
+        unsafe { PostMessageW(target as HWND, WM_APP_AUTOPILOT, 0, 0) };
+    });
+}
+
+unsafe fn toggle_focus(ui: &Ui) {
+    if need_pro(ui, "Focus mode") || with_data(|d| std::mem::replace(&mut d.focus_busy, true)) {
+        return;
+    }
+    let on = with_data(|d| d.focus.is_some());
+    InvalidateRect(ui.focus, null(), 0);
+    set_note(if on { "Putting everything back\u{2026}" } else { "Looking at what is busy in the background\u{2026}" }, Tone::Muted);
+    let target = ui.hwnd as usize;
+    std::thread::spawn(move || {
+        let (status, state) = if on {
+            let n = focus::stop();
+            let msg = match n {
+                0 => "Focus mode is off.".to_string(),
+                1 => "Focus mode is off: 1 program is back to full speed.".to_string(),
+                n => format!("Focus mode is off: {n} programs are back to full speed."),
+            };
+            (msg, None)
+        } else {
+            let st = focus::start();
+            (format!("\u{2714} Focus mode is on: {}.", st.summary()), Some(st))
+        };
+        with_data(|d| {
+            d.focus = state;
+            d.focus_busy = false;
+            d.status = Some((status, true));
+        });
+        unsafe { PostMessageW(target as HWND, WM_APP_FOCUS, 0, 0) };
+    });
+}
+
+// --------------------------------------------------------- developer junk
+
+unsafe fn start_dev_scan(ui: &Ui) {
+    if with_data(|d| std::mem::replace(&mut d.dev_busy, true)) {
+        return;
+    }
+    EnableWindow(ui.rescan, 0);
+    if with_data(|d| d.dev.is_some()) {
+        set_note("Looking again\u{2026}", Tone::Muted);
+    }
+    update_checks(ui);
+    let target = ui.hwnd as usize;
+    std::thread::spawn(move || {
+        let items = devclean::scan();
+        with_data(|d| {
+            d.dev = Some(items);
+            d.dev_busy = false;
+        });
+        unsafe { PostMessageW(target as HWND, WM_APP_DEV, 0, 0) };
+    });
+}
+
+
+fn capitalise(s: &str) -> String {
+    let mut c = s.chars();
+    c.next().map_or(String::new(), |f| f.to_uppercase().chain(c).collect())
+}
+
+fn edit_text(h: HWND) -> String {
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowTextW;
+    let mut buf = [0u16; 256];
+    let n = unsafe { GetWindowTextW(h, buf.as_mut_ptr(), buf.len() as i32) };
+    String::from_utf16_lossy(&buf[..n.max(0) as usize])
+}
+
+unsafe fn start_activation(ui: &Ui) {
+    let key = edit_text(ui.key);
+    if key.trim().is_empty() {
+        set_note("Paste the license key from your purchase email first.", Tone::Bad);
+        return;
+    }
+    EnableWindow(ui.activate, 0);
+    set_note("Checking your key\u{2026}", Tone::Muted);
+    let target = ui.hwnd as usize;
+    let key_box = ui.key as usize;
+    std::thread::spawn(move || {
+        let r = crate::license::activate(&key).map_err(|e| capitalise(&e)).map(|lic| {
+            unsafe { windows_sys::Win32::UI::WindowsAndMessaging::SetWindowTextW(key_box as HWND, wide("").as_ptr()) };
+            if lic.email.is_empty() {
+                "\u{2714} Pro is active. Thank you!".to_string()
+            } else {
+                format!("\u{2714} Pro is active for {}. Thank you!", lic.email)
+            }
+        });
+        *LICENSE_RESULT.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
+        unsafe { PostMessageW(target as HWND, WM_APP_LICENSE, 0, 0) };
+    });
+}
+
+unsafe fn start_deactivation(ui: &Ui) {
+    let q = wide("Remove Pro from this PC?\n\nYou can then activate the same key on another PC.");
+    if MessageBoxW(ui.hwnd, q.as_ptr(), wide(APP_NAME).as_ptr(), MB_YESNO | MB_ICONQUESTION) != IDYES {
+        return;
+    }
+    EnableWindow(ui.deactivate, 0);
+    set_note("Freeing this PC\u{2026}", Tone::Muted);
+    let target = ui.hwnd as usize;
+    std::thread::spawn(move || {
+        let r = crate::license::deactivate().map_err(|e| capitalise(&e)).map(|_| "Pro was removed from this PC. Activate your key on the other PC.".to_string());
+        *LICENSE_RESULT.lock().unwrap_or_else(|e| e.into_inner()) = Some(r);
+        unsafe { PostMessageW(target as HWND, WM_APP_LICENSE, 0, 0) };
+    });
+}
+
 // ------------------------------------------------------------ window proc
 
 unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
@@ -1784,6 +2421,25 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             if let Some(ui) = ui() {
                 layout(&ui);
             }
+            // Quiet license re-check (every 14 days; offline is fine).
+            std::thread::spawn(crate::license::recheck_if_due);
+            if std::env::args().any(|a| a == "--pro") && crate::license::launched() {
+                PostMessageW(hwnd, WM_COMMAND, (ID_NAV0 + nav_index(View::Pro) as u16) as usize, 0);
+            }
+            if std::env::args().any(|a| a == "--autopilot") {
+                PostMessageW(hwnd, WM_COMMAND, (ID_NAV0 + nav_index(View::Autopilot) as u16) as usize, 0);
+            }
+            if std::env::args().any(|a| a == "--history") {
+                PostMessageW(hwnd, WM_COMMAND, (ID_NAV0 + nav_index(View::History) as u16) as usize, 0);
+                start_scan(hwnd, true);
+            }
+            // Focus mode state (and clean-up after a restart).
+            let target = hwnd as usize;
+            std::thread::spawn(move || {
+                focus::recover_after_restart();
+                with_data(|d| d.focus = focus::load());
+                PostMessageW(target as HWND, WM_APP_FOCUS, 0, 0);
+            });
             // Look for a newer release on GitHub in the background.
             let target = hwnd as usize;
             std::thread::spawn(move || {
@@ -1797,39 +2453,52 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         WM_APP_UPDATE => {
             let pending = PENDING_UPDATE.lock().unwrap_or_else(|e| e.into_inner()).take();
             if let Some(r) = pending {
-                match crate::update::prompt(hwnd, &r) {
-                    crate::update::Choice::Update => {
-                        windows_sys::Win32::UI::WindowsAndMessaging::SetWindowTextW(
-                            hwnd,
-                            wide(&format!("{APP_NAME} \u{2014} downloading version {}\u{2026}", r.version)).as_ptr(),
-                        );
-                        let target = hwnd as usize;
-                        std::thread::spawn(move || {
-                            let ok = match crate::update::apply(&r) {
-                                Ok(()) => 1,
-                                Err(e) => {
-                                    *UPDATE_ERROR.lock().unwrap_or_else(|x| x.into_inner()) = Some(e);
-                                    0
-                                }
-                            };
-                            PostMessageW(target as HWND, WM_APP_UPDATE_DONE, ok, 0);
-                        });
-                    }
-                    crate::update::Choice::Skip => crate::update::skip(&r.version),
-                    crate::update::Choice::Later => {}
+                if popup::update_window(hwnd, &r) == popup::UpdateOutcome::Installing {
+                    // The new version takes over from here.
+                    windows_sys::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd);
                 }
             }
             0
         }
-        WM_APP_UPDATE_DONE => {
-            if wparam == 1 {
-                // The new version takes over from here.
-                windows_sys::Win32::UI::WindowsAndMessaging::DestroyWindow(hwnd);
-            } else {
-                windows_sys::Win32::UI::WindowsAndMessaging::SetWindowTextW(hwnd, wide(APP_NAME).as_ptr());
-                let e = UPDATE_ERROR.lock().unwrap_or_else(|x| x.into_inner()).take().unwrap_or_default();
-                let msg = wide(&format!("The update couldn't be installed: {e}\n\nYour current version keeps working."));
-                MessageBoxW(hwnd, msg.as_ptr(), wide(crate::update::DIALOG_TITLE).as_ptr(), MB_ICONINFORMATION);
+        WM_APP_DEV => {
+            if let Some(ui) = ui() {
+                EnableWindow(ui.rescan, 1);
+                if view() == View::Dev {
+                    render_list(&ui);
+                    if let Some((status, good)) = with_data(|d| d.status.take()) {
+                        set_note(&status, if good { Tone::Good } else { Tone::Bad });
+                    }
+                }
+            }
+            0
+        }
+        WM_APP_FOCUS | WM_APP_AUTOPILOT => {
+            if let Some(ui) = ui() {
+                if let Some((status, good)) = with_data(|d| d.status.take()) {
+                    set_note(&status, if good { Tone::Good } else { Tone::Bad });
+                }
+                for h in [ui.focus, ui.ap_run, ui.ap_switch] {
+                    InvalidateRect(h, null(), 0);
+                }
+                InvalidateRect(hwnd, null(), 0);
+            }
+            0
+        }
+        WM_APP_LICENSE => {
+            let r = LICENSE_RESULT.lock().unwrap_or_else(|e| e.into_inner()).take();
+            if let Some(ui) = ui() {
+                EnableWindow(ui.activate, 1);
+                EnableWindow(ui.deactivate, 1);
+                match r {
+                    Some(Ok(msg)) => set_note(&msg, Tone::Good),
+                    Some(Err(e)) => set_note(&e, Tone::Bad),
+                    None => {}
+                }
+                layout(&ui);
+                InvalidateRect(hwnd, null(), 0);
+                for h in [ui.optimize, ui.activate, ui.deactivate, ui.ap_switch, ui.focus] {
+                    InvalidateRect(h, null(), 0);
+                }
             }
             0
         }
@@ -1869,9 +2538,51 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         switch_view(&ui, View::Home);
                         start_scan(hwnd, false);
                     }
+                    ID_RESCAN if view() == View::Dev => start_dev_scan(&ui),
                     ID_RESCAN => start_scan(hwnd, view() != View::Home),
                     ID_OPTIMIZE => on_optimize(&ui),
                     ID_CHANGES => switch_view(&ui, View::History),
+                    ID_BUY => {
+                        if let Some(st) = crate::license::store() {
+                            windows_sys::Win32::UI::Shell::ShellExecuteW(hwnd, wide("open").as_ptr(), wide(st.checkout_url).as_ptr(), null(), null(), 1);
+                            set_note("The checkout opened in your browser. After paying, copy the license key from the page or your email and paste it below.", Tone::Muted);
+                        }
+                    }
+                    ID_ACTIVATE => start_activation(&ui),
+                    ID_DEACTIVATE => start_deactivation(&ui),
+                    ID_AP_SWITCH => toggle_autopilot(&ui),
+                    ID_AP_DAILY | ID_AP_WEEKLY => {
+                        let mut sch = autopilot::load();
+                        sch.every_days = if id == ID_AP_DAILY { 1 } else { 7 };
+                        autopilot::save(&sch);
+                        for h in [ui.ap_daily, ui.ap_weekly] {
+                            InvalidateRect(h, null(), 0);
+                        }
+                        InvalidateRect(hwnd, null(), 0);
+                    }
+                    ID_AP_RUN => run_autopilot_now(&ui),
+                    ID_FOCUS => toggle_focus(&ui),
+                    ID_AP_SERVERS => {
+                        let mut sch = autopilot::load();
+                        sch.close_dev_servers = !sch.close_dev_servers;
+                        autopilot::save(&sch);
+                        set_note(
+                            if sch.close_dev_servers {
+                                "Autopilot also closes dev servers and adb now, but only after 30 idle minutes and only when nothing is connected to them."
+                            } else {
+                                "Autopilot closes only Gradle and Kotlin build daemons."
+                            },
+                            Tone::Muted,
+                        );
+                        InvalidateRect(ui.ap_servers, null(), 0);
+                    }
+                    ID_AP_KEEP_CLEAR => {
+                        crate::settings::update(|x| x.keep_running.clear());
+                        set_note("Programs you kept running can be closed again by Optimise and Autopilot.", Tone::Muted);
+                        layout(&ui);
+                        InvalidateRect(hwnd, null(), 0);
+                    }
+                    ID_KEEP => toggle_keep(&ui),
                     ID_SELECT => {
                         let all = ALL_CHECKED.with(Cell::get);
                         // Only rows that have a checkbox.
@@ -1889,7 +2600,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                     i if i == ID_CARD0 + 1 => switch_view(&ui, View::Junk),
                     i if i == ID_CARD0 + 2 => switch_view(&ui, View::Startup),
                     i if i == ID_CARD0 + 3 => show_health(&ui),
-                    i if (ID_NAV0..ID_NAV0 + 6).contains(&i) => switch_view(&ui, PAGES[(i - ID_NAV0) as usize].view),
+                    i if (ID_NAV0..ID_NAV0 + NAV_N as u16).contains(&i) => switch_view(&ui, PAGES[(i - ID_NAV0) as usize].view),
                     _ => {}
                 }
             }
@@ -1900,6 +2611,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 TIMER_WATCH => {
                     KillTimer(hwnd, TIMER_WATCH);
                     refresh_agent_state();
+                    if view() == View::Autopilot {
+                        set_note(&autopilot_note(), Tone::Muted);
+                    }
                 }
                 TIMER_SPIN => {
                     SPIN.with(|s| s.set((s.get() + 9.0) % 360.0));
@@ -1955,9 +2669,21 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                         PostMessageW(hwnd, WM_APP_CHECKS, 0, 0);
                     }
                     if nm.new_state & LVIS_SELECTED != 0 && nm.old_state & LVIS_SELECTED == 0 {
-                        let detail = ROWS.with(|r| r.try_borrow().ok().and_then(|r| r.get(nm.item as usize).map(|ri| ri.detail.clone())));
-                        if let Some(t) = detail {
+                        let picked = ROWS.with(|r| r.try_borrow().ok().and_then(|r| r.get(nm.item as usize).map(|ri| (ri.detail.clone(), ri.row))));
+                        if let Some((t, row)) = picked {
                             set_note(&t, Tone::Muted);
+                            let label = match row {
+                                Row::Entry(id) => with_data(|d| {
+                                    d.journal.iter().find(|e| e.id == id).and_then(|e| match &e.action {
+                                        Action::KillProcesses { label, .. } => Some(keep_display(label)),
+                                        _ => None,
+                                    })
+                                }),
+                                _ => None,
+                            };
+                            KEEP_PICK.with(|k| *k.borrow_mut() = label);
+                            layout(&ui);
+                            InvalidateRect(ui.keep, null(), 0);
                         }
                     }
                 }
@@ -2002,7 +2728,10 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         WM_APP_APPLIED => {
             // Rescan quietly so every page reflects the new state; the result note survives.
             BUSY.with(|b| b.set(false));
-            start_scan(hwnd, true);
+            match ui() {
+                Some(ui) if view() == View::Dev => start_dev_scan(&ui),
+                _ => start_scan(hwnd, true),
+            }
             0
         }
         WM_APP_OPTIMIZED => {

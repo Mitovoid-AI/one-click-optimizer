@@ -1,18 +1,14 @@
-//! Updates from GitHub Releases: check for a newer version, ask
-//! "Update now / Skip this version / Later", download with SHA-256
-//! verification, and install it.
+//! Updates from GitHub Releases: check for a newer version, download it with
+//! SHA-256 verification, and install it. The "Update now / Skip / Later"
+//! window lives in `popup.rs`.
 //!
 //! Releases are built by .github/workflows/release.yml, which uploads
 //! OneClickOptimizer-Setup.exe, OneClickOptimizer.exe and SHA256SUMS.txt.
 
 use crate::install::{self, Layout, VERSION};
-use crate::util::{data_dir, fmt_bytes, wide};
-use serde::{Deserialize, Serialize};
-use std::ffi::c_void;
+use serde::Deserialize;
 use std::path::PathBuf;
-use std::ptr::{null, null_mut};
-use windows_sys::Win32::Foundation::HWND;
-use windows_sys::Win32::UI::Controls::{TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOG_BUTTON};
+use std::ptr::null;
 
 pub const REPO: &str = "Mitovoid-AI/one-click-optimizer";
 pub const SETUP_ASSET: &str = "OneClickOptimizer-Setup.exe";
@@ -42,6 +38,12 @@ pub struct Release {
 impl Release {
     pub fn asset(&self, name: &str) -> Option<&Asset> {
         self.assets.iter().find(|a| a.name.eq_ignore_ascii_case(name))
+    }
+
+    /// Download size of the file this copy would fetch (0 if unknown).
+    pub fn download_size(&self) -> u64 {
+        let installed = install::running_installed_copy(&Layout::standard());
+        self.asset(if installed { SETUP_ASSET } else { PORTABLE_ASSET }).map_or(0, |a| a.size)
     }
 }
 
@@ -114,111 +116,19 @@ pub fn current_version() -> String {
     std::env::var("OCO_FAKE_VERSION").unwrap_or_else(|_| VERSION.to_string())
 }
 
-// ------------------------------------------------------------------ settings
-
-#[derive(Default, Serialize, Deserialize)]
-struct Settings {
-    #[serde(default)]
-    skip_version: Option<String>,
-}
-
-fn settings_path() -> PathBuf {
-    data_dir().join("settings.json")
-}
-
-fn load_settings() -> Settings {
-    std::fs::read(settings_path()).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
-}
-
 /// "Skip this version": don't offer this version again.
 pub fn skip(version: &str) {
-    let mut s = load_settings();
-    s.skip_version = Some(version.to_string());
-    if let Ok(bytes) = serde_json::to_vec_pretty(&s) {
-        let _ = std::fs::write(settings_path(), bytes);
-    }
+    crate::settings::update(|s| s.skip_version = Some(version.to_string()));
 }
 
 pub fn is_skipped(version: &str) -> bool {
-    load_settings().skip_version.as_deref() == Some(version)
-}
-
-// ---------------------------------------------------------------------- http
-
-#[link(name = "wininet")]
-extern "system" {
-    fn InternetOpenW(agent: *const u16, access: u32, proxy: *const u16, bypass: *const u16, flags: u32) -> *mut c_void;
-    fn InternetOpenUrlW(h: *mut c_void, url: *const u16, headers: *const u16, headers_len: u32, flags: u32, ctx: usize) -> *mut c_void;
-    fn InternetReadFile(h: *mut c_void, buf: *mut u8, to_read: u32, read: *mut u32) -> i32;
-    fn InternetCloseHandle(h: *mut c_void) -> i32;
-    fn InternetSetOptionW(h: *mut c_void, option: u32, buf: *const c_void, len: u32) -> i32;
-    fn HttpQueryInfoW(h: *mut c_void, level: u32, buf: *mut c_void, len: *mut u32, index: *mut u32) -> i32;
-}
-
-struct Inet(*mut c_void);
-impl Drop for Inet {
-    fn drop(&mut self) {
-        unsafe {
-            InternetCloseHandle(self.0);
-        }
-    }
-}
-
-/// HTTPS GET with redirects, no cache, 20 s timeouts and a size limit.
-fn http_get(url: &str, accept: &str, limit: usize) -> Result<Vec<u8>, String> {
-    if !url.starts_with("https://") {
-        return Err("only HTTPS downloads are allowed".into());
-    }
-    unsafe {
-        let agent = wide(&format!("OneClickOptimizer/{VERSION}"));
-        let net = InternetOpenW(agent.as_ptr(), 0, null(), null(), 0);
-        if net.is_null() {
-            return Err("no internet connection".into());
-        }
-        let net = Inet(net);
-        let timeout: u32 = 20_000;
-        for opt in [2u32, 5, 6] {
-            // connect, send, receive timeouts
-            InternetSetOptionW(net.0, opt, &timeout as *const u32 as *const c_void, 4);
-        }
-        let headers = wide(&format!("Accept: {accept}\r\n"));
-        // INTERNET_FLAG_RELOAD | NO_CACHE_WRITE | NO_UI
-        let flags = 0x8000_0000 | 0x0400_0000 | 0x0000_0200;
-        let req = InternetOpenUrlW(net.0, wide(url).as_ptr(), headers.as_ptr(), u32::MAX, flags, 0);
-        if req.is_null() {
-            return Err("couldn't reach GitHub (check your internet connection)".into());
-        }
-        let req = Inet(req);
-        let mut status: u32 = 0;
-        let mut len = 4u32;
-        // HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER
-        HttpQueryInfoW(req.0, 19 | 0x2000_0000, &mut status as *mut u32 as *mut c_void, &mut len, null_mut());
-        if status != 200 {
-            return Err(format!("GitHub answered with HTTP {status}"));
-        }
-        let mut out = Vec::new();
-        let mut buf = vec![0u8; 64 * 1024];
-        loop {
-            let mut read = 0u32;
-            if InternetReadFile(req.0, buf.as_mut_ptr(), buf.len() as u32, &mut read) == 0 {
-                return Err("download interrupted".into());
-            }
-            if read == 0 {
-                break;
-            }
-            out.extend_from_slice(&buf[..read as usize]);
-            if out.len() > limit {
-                return Err("download is larger than expected".into());
-            }
-        }
-        Ok(out)
-    }
+    crate::settings::load().skip_version.as_deref() == Some(version)
 }
 
 /// Latest final release on GitHub (OCO_UPDATE_URL overrides the API URL for tests).
 pub fn latest() -> Result<Release, String> {
     let url = std::env::var("OCO_UPDATE_URL").unwrap_or_else(|_| format!("https://api.github.com/repos/{REPO}/releases/latest"));
-    let body = http_get(&url, "application/vnd.github+json", 4 << 20)?;
+    let body = crate::web::get(&url, "application/vnd.github+json", 4 << 20)?;
     parse_release(&String::from_utf8_lossy(&body))
 }
 
@@ -261,15 +171,17 @@ fn expected_hash(r: &Release, a: &Asset) -> Result<String, String> {
         return Ok(h.clone());
     }
     let sums = r.asset(SUMS_ASSET).ok_or("this release has no checksums, so it can't be verified")?;
-    let text = http_get(&sums.url, "application/octet-stream", 1 << 20)?;
+    let text = crate::web::get(&sums.url, "application/octet-stream", 1 << 20)?;
     find_in_sums(&String::from_utf8_lossy(&text), &a.name).ok_or_else(|| format!("no checksum listed for {}", a.name))
 }
 
 /// Downloads one release file to %TEMP% and checks size, exe header and SHA-256.
-pub fn download(r: &Release, name: &str) -> Result<PathBuf, String> {
+/// `progress(received, total)` follows the download (total 0 = unknown).
+pub fn download(r: &Release, name: &str, progress: &dyn Fn(u64, u64)) -> Result<PathBuf, String> {
     let a = r.asset(name).ok_or_else(|| format!("release {} has no {name}", r.tag))?;
     let want = expected_hash(r, a)?;
-    let bytes = http_get(&a.url, "application/octet-stream", MAX_DOWNLOAD)?;
+    let total = a.size;
+    let bytes = crate::web::get_with_progress(&a.url, "application/octet-stream", MAX_DOWNLOAD, &|got| progress(got, total))?;
     if a.size > 0 && bytes.len() as u64 != a.size {
         return Err("the download was incomplete".into());
     }
@@ -288,14 +200,14 @@ pub fn download(r: &Release, name: &str) -> Result<PathBuf, String> {
 /// Installs the update. Returns Ok when the caller should now exit:
 /// an installed copy hands over to the new setup (`--update`), a portable
 /// copy replaces its own exe and restarts.
-pub fn apply(r: &Release) -> Result<(), String> {
+pub fn apply(r: &Release, progress: &dyn Fn(u64, u64)) -> Result<(), String> {
     let l = Layout::standard();
     if install::running_installed_copy(&l) {
-        let setup = download(r, SETUP_ASSET)?;
+        let setup = download(r, SETUP_ASSET, progress)?;
         std::process::Command::new(&setup).arg("--update").spawn().map_err(|e| format!("couldn't start the update: {e}"))?;
         return Ok(());
     }
-    let new = download(r, PORTABLE_ASSET)?;
+    let new = download(r, PORTABLE_ASSET, progress)?;
     let me = std::env::current_exe().map_err(|e| e.to_string())?;
     let aside = me.with_extension(format!("{}.old", std::process::id()));
     std::fs::rename(&me, &aside).map_err(|e| format!("couldn't replace the app: {e}"))?;
@@ -307,18 +219,7 @@ pub fn apply(r: &Release) -> Result<(), String> {
     Ok(())
 }
 
-// ----------------------------------------------------------------- prompt
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Choice {
-    Update,
-    Skip,
-    Later,
-}
-
-const BTN_UPDATE: i32 = 1001;
-const BTN_SKIP: i32 = 1002;
-const BTN_LATER: i32 = 1003;
+// -------------------------------------------------------------- what's new
 
 /// Plain-text "What's new" from the release notes: the `## What's new`
 /// section the release workflow copies from CHANGELOG.md (or, failing that,
@@ -346,55 +247,14 @@ pub fn whats_new(notes: &str) -> String {
     s
 }
 
-/// "Update now / Skip this version / Later" (a native Windows task dialog).
-pub fn prompt(parent: HWND, r: &Release) -> Choice {
-    let size = r.asset(SETUP_ASSET).map(|a| fmt_bytes(a.size)).unwrap_or_default();
-    let title = wide(DIALOG_TITLE);
-    let main = wide(&format!("Version {} is available", r.version));
-    let content = wide(&format!("You have version {}. Updating takes a few seconds and keeps your history.", current_version()));
-    let b1 = wide(&format!("Update now\nDownloads {size} and restarts OneClick Optimizer"));
-    let b2 = wide(&format!("Skip this version\nDon't remind me about version {}", r.version));
-    let b3 = wide("Later\nAsk me next time");
-    let notes = whats_new(&r.notes);
-    let expanded = wide(&notes);
-    let show = wide("What's new");
-    let hide = wide("Hide what's new");
-    let buttons = [
-        TASKDIALOG_BUTTON { nButtonID: BTN_UPDATE, pszButtonText: b1.as_ptr() },
-        TASKDIALOG_BUTTON { nButtonID: BTN_SKIP, pszButtonText: b2.as_ptr() },
-        TASKDIALOG_BUTTON { nButtonID: BTN_LATER, pszButtonText: b3.as_ptr() },
-    ];
-    let icon = crate::icon::app_icon(32);
-    let mut pressed = BTN_LATER;
-    unsafe {
-        let mut c: TASKDIALOGCONFIG = std::mem::zeroed();
-        c.cbSize = std::mem::size_of::<TASKDIALOGCONFIG>() as u32;
-        c.hwndParent = parent;
-        // command links | allow cancel | position relative to window | use HICON
-        c.dwFlags = 0x10 | 0x8 | 0x1000 | 0x2;
-        c.pszWindowTitle = title.as_ptr();
-        c.Anonymous1.hMainIcon = icon;
-        c.pszMainInstruction = main.as_ptr();
-        c.pszContent = content.as_ptr();
-        c.cButtons = buttons.len() as u32;
-        c.pButtons = buttons.as_ptr();
-        c.nDefaultButton = BTN_UPDATE;
-        if !notes.is_empty() {
-            c.pszExpandedInformation = expanded.as_ptr();
-            c.pszCollapsedControlText = show.as_ptr();
-            c.pszExpandedControlText = hide.as_ptr();
-        }
-        if TaskDialogIndirect(&c, &mut pressed, null_mut(), null_mut()) < 0 {
-            return Choice::Later;
-        }
-    }
-    match pressed {
-        BTN_UPDATE => Choice::Update,
-        BTN_SKIP => Choice::Skip,
-        _ => Choice::Later,
-    }
+/// The "What's new" items without bullets, for the update window.
+pub fn whats_new_items(notes: &str) -> Vec<String> {
+    whats_new(notes)
+        .lines()
+        .map(|l| l.trim_start_matches('\u{2022}').trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect()
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -453,11 +313,6 @@ mod tests {
         assert_eq!(find_in_sums(sums, "OneClickOptimizer-Setup.exe").as_deref(), Some("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"));
         assert_eq!(find_in_sums(sums, "other.exe"), None, "short hashes are rejected");
         assert_eq!(find_in_sums(sums, "missing.exe"), None);
-    }
-
-    #[test]
-    fn only_https() {
-        assert!(http_get("http://example.com", "*/*", 10).is_err());
     }
 
     #[test]

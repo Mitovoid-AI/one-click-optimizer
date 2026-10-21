@@ -195,16 +195,14 @@ unsafe fn layout(s: &S) {
 unsafe fn paint(s: &S, hdc: HDC, w: i32, h: i32) {
     let l = Layout::standard();
     fill(hdc, &rect(0, 0, w, h), CARD);
-    // Header band.
+    // Header band: the same dark slate as the app's sidebar.
     let band = rect(0, 0, w, sc(s, 176));
-    let g = Gfx::new(hdc);
-    g.fill_round_gradient(&rect(-20, -20, w + 20, band.bottom), 1.0, ACCENT, BLUE);
-    drop(g);
+    fill(hdc, &band, SIDEBAR);
     let icon_px = sc(s, 64);
     DrawIconEx(hdc, sc(s, 30), sc(s, 38), s.logo, icon_px, icon_px, 0, null_mut(), 3);
     text(hdc, APP_NAME, rect(sc(s, 112), sc(s, 40), w - sc(s, 16), sc(s, 82)), s.f.title, WHITE, DT_SINGLELINE | DT_VCENTER);
-    text(hdc, &format!("Faster PC in one click  \u{00B7}  version {VERSION}"), rect(sc(s, 112), sc(s, 84), w - sc(s, 16), sc(s, 108)), s.f.body, (204, 251, 241), DT_SINGLELINE);
-    text(hdc, "Installs just for you: no admin needed, about 1 MB.", rect(sc(s, 30), sc(s, 128), w - sc(s, 16), sc(s, 156)), s.f.small_bold, WHITE, DT_SINGLELINE);
+    text(hdc, &format!("Faster PC in one click  \u{00B7}  version {VERSION}"), rect(sc(s, 112), sc(s, 84), w - sc(s, 16), sc(s, 108)), s.f.body, SIDEBAR_TEXT, DT_SINGLELINE);
+    text(hdc, "Installs just for you: no admin needed, about 1 MB.", rect(sc(s, 30), sc(s, 128), w - sc(s, 16), sc(s, 156)), s.f.small, SIDEBAR_MUTED, DT_SINGLELINE);
 
     match PAGE.with(Cell::get) {
         Page::Choose | Page::Working | Page::Failed => {
@@ -230,26 +228,22 @@ unsafe fn paint(s: &S, hdc: HDC, w: i32, h: i32) {
         }
         Page::Done => {
             let (desktop, tray) = OPTS.with(Cell::get);
-            let cx = (w / 2) as f32;
-            let cy = sc(s, 262) as f32;
-            let g = Gfx::new(hdc);
-            g.circle(cx, cy, sc(s, 60) as f32, (220, 252, 231), None);
-            g.circle(cx, cy, sc(s, 46) as f32, (34, 197, 94), Some((21, 128, 61)));
-            drop(g);
-            text(hdc, "\u{E73E}", rect(0, cy as i32 - sc(s, 46), w, cy as i32 + sc(s, 46)), s.f.icons_big, WHITE, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            text(hdc, "All set! OneClick Optimizer is installed", rect(0, sc(s, 334), w, sc(s, 370)), s.f.section, INK, DT_CENTER | DT_SINGLELINE | DT_VCENTER);
-            let mut lines = vec![("\u{E8A9}", "Start menu: search for \u{201C}OneClick Optimizer\u{201D}".to_string())];
+            let head = rect(sc(s, 30), sc(s, 206), w - sc(s, 28), sc(s, 240));
+            text(hdc, "\u{E73E}", rect(head.left, head.top, head.left + sc(s, 30), head.bottom), s.f.icons, GOOD, DT_SINGLELINE | DT_VCENTER);
+            text(hdc, "OneClick Optimizer is installed", rect(head.left + sc(s, 34), head.top, head.right, head.bottom), s.f.section, INK, DT_SINGLELINE | DT_VCENTER);
+            text(hdc, "Where to find it", rect(sc(s, 30), sc(s, 258), w - sc(s, 28), sc(s, 282)), s.f.small_bold, MUTED, DT_SINGLELINE | DT_VCENTER);
+            let mut lines = vec![("Start menu", "search for \u{201C}OneClick Optimizer\u{201D}".to_string())];
             if desktop {
-                lines.push(("\u{E7F4}", "Desktop: the OneClick Optimizer icon".to_string()));
+                lines.push(("Desktop", "the OneClick Optimizer icon".to_string()));
             }
             if tray {
-                lines.push(("\u{E945}", "Tray: the icon next to the clock (starts with Windows)".to_string()));
+                lines.push(("Tray", "the icon next to the clock, starts with Windows".to_string()));
             }
-            lines.push(("\u{E74D}", "Remove it any time: Settings \u{2192} Apps \u{2192} Installed apps".to_string()));
-            for (i, (glyph, line)) in lines.iter().enumerate() {
-                let y = sc(s, 384) + i as i32 * sc(s, 30);
-                text(hdc, glyph, rect(sc(s, 64), y, sc(s, 94), y + sc(s, 28)), s.f.icons, ACCENT, DT_SINGLELINE | DT_VCENTER);
-                text(hdc, line, rect(sc(s, 98), y, w - sc(s, 28), y + sc(s, 28)), s.f.body, INK, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+            lines.push(("To remove it", "Settings \u{2192} Apps \u{2192} Installed apps".to_string()));
+            for (i, (place, line)) in lines.iter().enumerate() {
+                let y = sc(s, 286) + i as i32 * sc(s, 30);
+                text(hdc, place, rect(sc(s, 30), y, sc(s, 150), y + sc(s, 28)), s.f.bold, INK, DT_SINGLELINE | DT_VCENTER);
+                text(hdc, line, rect(sc(s, 150), y, w - sc(s, 28), y + sc(s, 28)), s.f.body, MUTED, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
             }
         }
     }
@@ -269,31 +263,24 @@ unsafe fn draw_item(s: &S, d: &DrawItem) {
             fill(d.hdc, &d.rc, CARD);
             let g = Gfx::new(d.hdc);
             g.fill_round(&d.rc, sc(s, 12) as f32, if hovered(d.hwnd_item) { BG } else { CARD }, Some(BORDER));
-            let (sw, sh) = (sc(s, 44), sc(s, 24));
-            let sx = d.rc.right - sc(s, 18) - sw;
-            let sy = (d.rc.top + d.rc.bottom) / 2 - sh / 2;
-            g.fill_round(&rect(sx, sy, sx + sw, sy + sh), (sh / 2) as f32, if on { ACCENT } else { DISABLED }, None);
-            let knob = if on { sx + sw - sh / 2 } else { sx + sh / 2 };
-            g.dot(knob as f32, (sy + sh / 2) as f32, (sh / 2 - sc(s, 3)) as f32, WHITE);
             drop(g);
+            let sx = d.rc.right - sc(s, 18) - sc(s, 40);
+            draw_switch(d.hdc, &rect(sx, d.rc.top, d.rc.right - sc(s, 18), d.rc.bottom), on, DISABLED, s.dpi);
             text(d.hdc, title, rect(d.rc.left + sc(s, 18), d.rc.top + sc(s, 10), sx - sc(s, 10), d.rc.top + sc(s, 34)), s.f.bold, INK, DT_SINGLELINE);
             text(d.hdc, sub, rect(d.rc.left + sc(s, 18), d.rc.top + sc(s, 34), sx - sc(s, 10), d.rc.bottom - sc(s, 6)), s.f.small, MUTED, DT_SINGLELINE | DT_END_ELLIPSIS);
         }
         ID_INSTALL => {
             let installed = install::installed_version(&Layout::standard());
-            let (label, glyph) = match page {
-                Page::Choose | Page::Failed => (
-                    match installed.as_deref() {
-                        Some(v) if v == VERSION => "Repair install".to_string(),
-                        Some(_) => format!("Update to {VERSION}"),
-                        None => "Install".to_string(),
-                    },
-                    '\u{E896}',
-                ),
-                Page::Working => ("Installing\u{2026}".to_string(), '\u{E896}'),
-                Page::Done => ("Open OneClick Optimizer".to_string(), '\u{E945}'),
+            let label = match page {
+                Page::Choose | Page::Failed => match installed.as_deref() {
+                    Some(v) if v == VERSION => "Repair install".to_string(),
+                    Some(_) => format!("Update to {VERSION}"),
+                    None => "Install".to_string(),
+                },
+                Page::Working => "Installing\u{2026}".to_string(),
+                Page::Done => "Open OneClick Optimizer".to_string(),
             };
-            draw_primary(d, CARD, &label, "", &s.f, Some(glyph), s.dpi);
+            draw_primary(d, CARD, &label, "", &s.f, None, s.dpi);
         }
         ID_SECONDARY => {
             fill(d.hdc, &d.rc, CARD);

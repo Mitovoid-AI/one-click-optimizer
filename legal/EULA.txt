@@ -1,0 +1,84 @@
+ONECLICK OPTIMIZER - END USER LICENSE AGREEMENT
+
+DRAFT - fill in every [BRACKET], have it checked, then remove this line.
+
+Last updated: [DATE]
+
+This agreement is between you and [SELLER LEGAL NAME], [CITY], India
+("we", "us"). It covers the OneClick Optimizer app, its free features and
+its paid "Pro" features (the "Software"). By installing or using the
+Software you agree to it. If you don't agree, don't install it.
+
+1. WHAT YOU MAY DO
+   a. Free version: you may install and use the Software on any number of
+      your own computers, for personal or business use, at no charge.
+   b. Pro: one Pro license key may be active on up to 3 computers at a
+      time. You can move it by using "Move Pro to another PC" in the app.
+   c. "Lifetime" means for as long as we offer the Software, including all
+      updates to version 1.x and every later version we release as a free
+      update. It is not tied to a subscription and never renews.
+
+2. WHAT YOU MAY NOT DO
+   a. Share, sell, publish or give away your license key.
+   b. Remove, bypass or disable the license check.
+   c. Copy, modify, decompile or reverse engineer the Software, except where
+      the law allows it regardless of this agreement.
+   d. Rent, lease or resell the Software, or use it to provide a service to
+      others.
+
+3. WHAT THE SOFTWARE DOES TO YOUR PC
+   The Software closes programs you choose, changes startup and service
+   settings you choose, and deletes temporary files, junk files and
+   developer folders (such as node_modules) you choose. If you turn on
+   Autopilot, it deletes old temporary files and closes idle developer tools
+   on a schedule. Focus mode lowers the priority of background programs and
+   changes the power mode until you turn it off.
+   It shows each change before making it and keeps a history so most
+   changes can be undone. Deleted files cannot be restored. Save your work
+   before using one-click Optimise. You are responsible for the changes you
+   ask the Software to make.
+
+4. PURCHASES AND REFUNDS
+   Pro is sold by our online reseller, Polar Software, Inc. (polar.sh),
+   which is the merchant of record for your order and handles
+   payment, taxes and receipts. If you aren't happy, you can get a full
+   refund within 30 days of purchase (see the refund policy at [WEBSITE]/refund).
+   A refunded key stops working.
+
+5. UPDATES
+   The Software checks for new versions and asks before installing one.
+   We may add, change or remove features in updates. Features you paid for
+   will not be moved behind a new payment.
+
+6. PRIVACY
+   The Software does not send your files, scan results or usage to us. See
+   the privacy policy at [WEBSITE]/privacy for the few things it does send
+   (an update check, and your license key when you activate Pro).
+
+7. OPEN-SOURCE PARTS
+   The Software includes open-source components under their own licenses,
+   listed in THIRD-PARTY-NOTICES.txt in the install folder. Nothing in
+   this agreement limits your rights under those licenses.
+
+8. NO WARRANTY
+   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+   OR IMPLIED, INCLUDING FITNESS FOR A PARTICULAR PURPOSE. WE DO NOT
+   PROMISE THAT IT WILL MAKE YOUR COMPUTER FASTER OR THAT IT IS ERROR-FREE.
+   Some places don't allow these exclusions, so they may not apply to you.
+
+9. LIMIT OF LIABILITY
+   TO THE EXTENT THE LAW ALLOWS, WE ARE NOT LIABLE FOR ANY INDIRECT OR
+   CONSEQUENTIAL LOSS, OR FOR LOST DATA OR PROFITS, AND OUR TOTAL LIABILITY
+   IS LIMITED TO THE AMOUNT YOU PAID FOR THE SOFTWARE. Nothing here limits
+   rights you have as a consumer that cannot be excluded by contract.
+
+10. ENDING THIS AGREEMENT
+    You can end it at any time by uninstalling the Software. It ends
+    automatically if you break section 2. Sections 3, 7, 8 and 9 survive.
+
+11. LAW
+    This agreement is governed by the laws of India, without limiting any
+    consumer protection you have under the laws of the country you live in.
+
+12. CONTACT
+    [SELLER LEGAL NAME] - [CONTACT EMAIL] - [WEBSITE]

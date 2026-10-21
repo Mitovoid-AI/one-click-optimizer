@@ -7,7 +7,8 @@ use crate::model::{MemInfo, Snapshot};
 use crate::optimize::{self, RunSummary, ScanResult};
 use crate::paint::*;
 use crate::util::{fmt_bytes, wide};
-use crate::{actions::Op, icon, report, sys, APP_NAME};
+use crate::popup::{self, Toast};
+use crate::{actions::Op, autopilot, focus, icon, report, sys, APP_NAME};
 use std::cell::{Cell, RefCell};
 use std::ptr::{null, null_mut};
 use std::sync::Mutex;
@@ -43,10 +44,10 @@ const WM_APP: u32 = 0x8000;
 const WM_TRAY: u32 = WM_APP + 10;
 const WM_DEVTOOLS: u32 = WM_APP + 11;
 const WM_UPDATE: u32 = WM_APP + 12;
-const WM_UPDATE_DONE: u32 = WM_APP + 13;
+const WM_AUTOPILOT: u32 = WM_APP + 14;
+const WM_FOCUS: u32 = WM_APP + 15;
 const WM_P_SCANNED: u32 = WM_APP + 20;
 const WM_P_DONE: u32 = WM_APP + 21;
-const NIN_BALLOONUSERCLICK: u32 = 0x405;
 
 const NIM_ADD: u32 = 0;
 const NIM_MODIFY: u32 = 1;
@@ -54,9 +55,6 @@ const NIM_DELETE: u32 = 2;
 const NIF_MESSAGE: u32 = 1;
 const NIF_ICON: u32 = 2;
 const NIF_TIP: u32 = 4;
-const NIF_INFO: u32 = 0x10;
-const NIIF_INFO: u32 = 1;
-const NIIF_WARNING: u32 = 2;
 
 const MF_STRING: u32 = 0;
 const MF_SEPARATOR: u32 = 0x800;
@@ -82,6 +80,12 @@ const CMD_OPEN: usize = 2;
 const CMD_AUTOSTART: usize = 3;
 const CMD_EXIT: usize = 4;
 const CMD_UPDATE: usize = 5;
+const CMD_FOCUS: usize = 6;
+
+/// What a toast's button does (WM_TOAST_ACTION wparam).
+const TAG_PANEL: usize = 1;
+const TAG_UPDATE: usize = 2;
+const TAG_HISTORY: usize = 3;
 
 /// First update check 30 s after start, then every 6 hours (in 5 s ticks).
 const UPDATE_FIRST_TICK: u64 = 6;
@@ -95,6 +99,7 @@ static AGENT_UPDATE_ERR: Mutex<Option<String>> = Mutex::new(None);
 const ID_P_CLOSE: u16 = 101;
 const ID_P_OPTIMIZE: u16 = 102;
 const ID_P_OPEN: u16 = 103;
+const ID_P_FOCUS: u16 = 104;
 const TIMER_TICK: usize = 1;
 const TIMER_P_SPIN: usize = 2;
 
@@ -103,13 +108,19 @@ const TICK_MS: u32 = 5_000;
 const CRITICAL_TICKS: u32 = 24;
 /// Check for idle dev tools every 10 minutes.
 const DEVTOOL_TICKS: u64 = 120;
+/// Autopilot looks whether a clean-up is due every minute.
+const AUTOPILOT_TICKS: u64 = 12;
+/// Focus mode re-checks what is busy every 30 seconds.
+const FOCUS_TICKS: u64 = 6;
+/// CPU use per program is recorded every 5 minutes (Autopilot's 30-minute rule).
+const CPU_SAMPLE_TICKS: u64 = 60;
 const ALERT_COOLDOWN_SECS: u64 = 30 * 60;
 const FT_SEC: u64 = crate::util::FT_PER_SEC;
 
 pub const TRAY_CLASS: &str = "OneClickOptimizerTray";
 const POPUP_CLASS: &str = "OneClickOptimizerPanel";
 const POPUP_W: i32 = 360;
-const POPUP_H: i32 = 520;
+const POPUP_H: i32 = 580;
 
 #[link(name = "dwmapi")]
 extern "system" {
@@ -131,12 +142,30 @@ struct State {
     last_devtool_sig: String,
     devtool_check_running: bool,
     taskbar_created: u32,
+    autopilot_running: bool,
+    focus_busy: bool,
 }
 
 thread_local! {
     static ST: RefCell<Option<State>> = const { RefCell::new(None) };
-    /// The last notification was "update available" (so a click means update).
-    static BALLOON_IS_UPDATE: Cell<bool> = const { Cell::new(false) };
+    /// A notification held back while you present or play full-screen.
+    static HELD: RefCell<Option<Toast>> = const { RefCell::new(None) };
+}
+
+static AUTOPILOT_RESULT: Mutex<Option<autopilot::Report>> = Mutex::new(None);
+static FOCUS_RESULT: Mutex<Option<String>> = Mutex::new(None);
+
+/// Shows a notification now, or holds it until you are not busy.
+fn notify(hwnd: HWND, t: Toast) {
+    if popup::notifications_allowed() {
+        popup::show_toast(hwnd, t);
+    } else {
+        HELD.with(|h| *h.borrow_mut() = Some(t));
+    }
+}
+
+fn toast(title: &str, body: &str, action: Option<&str>, tag: usize) -> Toast {
+    Toast { title: title.to_string(), body: body.to_string(), action: action.map(str::to_string), tag }
 }
 
 /// Checks GitHub off-thread; the answer comes back as WM_UPDATE
@@ -159,30 +188,21 @@ fn spawn_update_check(hwnd: HWND, manual: bool) {
     });
 }
 
-/// Shows "Update now / Skip / Later" and starts the update if chosen.
+/// Shows the update window; when the new version installs, the tray watch
+/// steps aside (the update starts it again).
 unsafe fn offer_update(hwnd: HWND) {
     let pending = AGENT_UPDATE.lock().unwrap_or_else(|e| e.into_inner()).take();
     let Some(r) = pending else { return };
-    match crate::update::prompt(null_mut(), &r) {
-        crate::update::Choice::Update => {
-            log(&format!("update: downloading {}", r.version));
-            let target = hwnd as usize;
-            std::thread::spawn(move || {
-                let ok = match crate::update::apply(&r) {
-                    Ok(()) => 1,
-                    Err(e) => {
-                        *AGENT_UPDATE_ERR.lock().unwrap_or_else(|x| x.into_inner()) = Some(e);
-                        0
-                    }
-                };
-                PostMessageW(target as HWND, WM_UPDATE_DONE, ok, 0);
-            });
+    popup::close_toast();
+    match popup::update_window(null_mut(), &r) {
+        popup::UpdateOutcome::Installing => {
+            log(&format!("update: installing {}, handing over", r.version));
+            DestroyWindow(hwnd);
         }
-        crate::update::Choice::Skip => {
-            log(&format!("update: skipped {}", r.version));
-            crate::update::skip(&r.version);
+        popup::UpdateOutcome::Skipped => log(&format!("update: skipped {}", r.version)),
+        popup::UpdateOutcome::Later => {
+            // Keep it so the menu's "Check for updates" or the next check can offer it again.
         }
-        crate::update::Choice::Later => {}
     }
 }
 
@@ -241,7 +261,10 @@ unsafe fn register(class: &str, proc_: unsafe extern "system" fn(HWND, u32, WPAR
 pub fn run() {
     unsafe {
         SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE);
-        CreateMutexW(null(), 0, wide("Local\\OneClickOptimizer.Tray").as_ptr());
+        // Sandboxed test runs (OCO_DATA_DIR) get their own lock, so they run
+        // next to a real installed copy without touching it.
+        let lock = if std::env::var_os("OCO_DATA_DIR").is_some() { "Local\\OneClickOptimizer.Tray.Test" } else { "Local\\OneClickOptimizer.Tray" };
+        CreateMutexW(null(), 0, wide(lock).as_ptr());
         if GetLastError() == ERROR_ALREADY_EXISTS {
             return; // already running
         }
@@ -264,9 +287,12 @@ pub fn run() {
                 last_devtool_sig: String::new(),
                 devtool_check_running: false,
                 taskbar_created: RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()),
+                autopilot_running: false,
+                focus_busy: false,
             })
         });
         migrate_autostart();
+        std::thread::spawn(focus::recover_after_restart);
         add_icon(hwnd);
         log(&format!("tray watch started (pid {}, every {} ms)", std::process::id(), tick_ms()));
         tick();
@@ -308,22 +334,12 @@ unsafe fn add_icon(hwnd: HWND) {
     });
 }
 
-unsafe fn balloon(hwnd: HWND, title: &str, text: &str, warning: bool) {
-    BALLOON_IS_UPDATE.with(|b| b.set(false));
-    let mut nid = base_nid(hwnd);
-    nid.uFlags = NIF_INFO;
-    copy_into(&mut nid.szInfoTitle, title);
-    copy_into(&mut nid.szInfo, text);
-    nid.dwInfoFlags = if warning { NIIF_WARNING } else { NIIF_INFO };
-    Shell_NotifyIconW(NIM_MODIFY, &nid);
-}
-
 /// Every 5 s: one cheap memory read, icon/tooltip update, and alerts.
 fn tick() {
     let mem = sys::mem::read_mem();
     let (ratio, level) = analyze::pressure(&mem);
     let now = sys::mem::now_filetime();
-    let Some((hwnd, changed, alert, devtools, update_due)) = ST.with(|s| {
+    let Some((hwnd, changed, alert, devtools, update_due, autopilot_check, focus_check)) = ST.with(|s| {
         let mut b = s.borrow_mut();
         let st = b.as_mut()?;
         st.ticks += 1;
@@ -340,12 +356,29 @@ fn tick() {
             st.devtool_check_running = true;
         }
         let update_due = st.ticks == UPDATE_FIRST_TICK || st.ticks % UPDATE_EVERY_TICKS == 0;
-        Some((st.hwnd, changed, alert, devtools, update_due))
+        let autopilot_check = st.ticks % AUTOPILOT_TICKS == 0 && !st.autopilot_running;
+        let focus_check = st.ticks % FOCUS_TICKS == 0 && !st.focus_busy;
+        Some((st.hwnd, changed, alert, devtools, update_due, autopilot_check, focus_check))
     }) else {
         return;
     };
     if update_due {
         spawn_update_check(hwnd, false);
+    }
+    // A notification held back while you were busy.
+    if popup::notifications_allowed() {
+        if let Some(t) = HELD.with(|h| h.borrow_mut().take()) {
+            popup::show_toast(hwnd, t);
+        }
+    }
+    if ST.with(|s| s.borrow().as_ref().is_some_and(|st| st.ticks == 1 || st.ticks % CPU_SAMPLE_TICKS == 0)) {
+        autopilot::record_cpu_sample();
+    }
+    if autopilot_check {
+        maybe_run_autopilot(hwnd);
+    }
+    if focus_check && focus::is_on() {
+        std::thread::spawn(focus::refresh);
     }
 
     unsafe {
@@ -386,9 +419,9 @@ fn tick() {
             .take(3)
             .map(|g| format!("{} {}", g.name, fmt_bytes(g.private_bytes)))
             .collect();
-        let text = format!("{}. Biggest: {}. Click the tray icon for one-click Optimise.", report::headline(&mem), top.join(", "));
+        let text = format!("{}. Biggest: {}.", report::headline(&mem), top.join(", "));
         log(&format!("alert: critical memory. {text}"));
-        unsafe { balloon(hwnd, "Memory is critically low", &text, true) };
+        notify(hwnd, toast("Memory is almost full", &text, Some("Optimise"), TAG_PANEL));
     }
 
     if devtools {
@@ -418,7 +451,7 @@ fn on_devtools_result() {
     let Some((sig, count, bytes, names)) = DEVTOOL_RESULT.lock().unwrap_or_else(|e| e.into_inner()).take() else {
         return;
     };
-    let notify = ST.with(|s| {
+    let fresh_hwnd = ST.with(|s| {
         let mut b = s.borrow_mut();
         let st = b.as_mut()?;
         st.devtool_check_running = false;
@@ -427,16 +460,104 @@ fn on_devtools_result() {
         fresh.then_some(st.hwnd)
     });
     log(&format!("dev-tool check: {count} idle, {}", fmt_bytes(bytes)));
-    if let Some(hwnd) = notify {
-        let title = format!("{count} idle dev tool(s) holding {}", fmt_bytes(bytes));
+    if let Some(hwnd) = fresh_hwnd {
+        let title = if count == 1 { format!("An idle dev tool is holding {}", fmt_bytes(bytes)) } else { format!("{count} idle dev tools are holding {}", fmt_bytes(bytes)) };
         log(&format!("alert: {title}. {names}"));
-        unsafe { balloon(hwnd, &title, &format!("{names}. Click the tray icon to free it in one click."), false) };
+        notify(hwnd, toast(&title, &format!("{names}. Nothing has used them for a while."), Some("Free it"), TAG_PANEL));
     }
 }
 
 fn open_app() {
+    open_app_with(&[]);
+}
+
+/// Runs a due Autopilot clean-up off-thread (Pro, idle PC, power OK, not busy).
+fn maybe_run_autopilot(hwnd: HWND) {
+    let sch = autopilot::load();
+    if !sch.enabled || !crate::license::is_pro() {
+        return;
+    }
+    let now = crate::util::unix_now();
+    if !sch.due(now, autopilot::idle_secs()) || !autopilot::power_ok() || !autopilot::user_not_busy() || focus::is_on() {
+        return;
+    }
+    // Wait until the tray has watched programs for 30 minutes, so "idle" is real.
+    if !autopilot::history_ready(&autopilot::load_history(), now) {
+        return;
+    }
+    ST.with(|s| {
+        if let Some(st) = s.borrow_mut().as_mut() {
+            st.autopilot_running = true;
+        }
+    });
+    log("autopilot: starting a scheduled clean-up");
+    let target = hwnd as usize;
+    std::thread::spawn(move || {
+        let rep = autopilot::run_now();
+        *AUTOPILOT_RESULT.lock().unwrap_or_else(|e| e.into_inner()) = Some(rep);
+        unsafe { PostMessageW(target as HWND, WM_AUTOPILOT, 0, 0) };
+    });
+}
+
+fn on_autopilot_done(hwnd: HWND) {
+    ST.with(|s| {
+        if let Some(st) = s.borrow_mut().as_mut() {
+            st.autopilot_running = false;
+        }
+    });
+    let Some(rep) = AUTOPILOT_RESULT.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
+    log(&format!("autopilot: {}", rep.text()));
+    // Only worth a notification when something was freed or went wrong.
+    if rep.freed() > 0 || rep.failed > 0 {
+        let title = if rep.freed() > 0 { format!("Autopilot freed {}", fmt_bytes(rep.freed())) } else { "Autopilot finished".to_string() };
+        notify(hwnd, toast(&title, &rep.text(), Some("See details"), TAG_HISTORY));
+    }
+}
+
+/// Turns Focus mode on or off off-thread (Pro only).
+fn toggle_focus(hwnd: HWND) {
+    if !crate::license::is_pro() {
+        open_app_with(&["--pro"]);
+        return;
+    }
+    let busy = ST.with(|s| s.borrow_mut().as_mut().map(|st| std::mem::replace(&mut st.focus_busy, true)).unwrap_or(true));
+    if busy {
+        return;
+    }
+    let target = hwnd as usize;
+    std::thread::spawn(move || {
+        let msg = if focus::is_on() {
+            let n = focus::stop();
+            format!("Focus mode is off. {n} program(s) are back to full speed.")
+        } else {
+            let st = focus::start();
+            format!("Focus mode is on: {}.", st.summary())
+        };
+        *FOCUS_RESULT.lock().unwrap_or_else(|e| e.into_inner()) = Some(msg);
+        unsafe { PostMessageW(target as HWND, WM_FOCUS, 0, 0) };
+    });
+}
+
+fn on_focus_done(hwnd: HWND) {
+    ST.with(|s| {
+        if let Some(st) = s.borrow_mut().as_mut() {
+            st.focus_busy = false;
+        }
+    });
+    let Some(msg) = FOCUS_RESULT.lock().unwrap_or_else(|e| e.into_inner()).take() else { return };
+    log(&format!("focus: {msg}"));
+    if let Some(p) = panel() {
+        unsafe {
+            InvalidateRect(p.focus, null(), 0);
+        }
+    }
+    let on = focus::is_on();
+    popup::show_toast(hwnd, toast(if on { "Focus mode is on" } else { "Focus mode is off" }, &msg, None, 0));
+}
+
+fn open_app_with(args: &[&str]) {
     if let Ok(exe) = std::env::current_exe() {
-        let _ = std::process::Command::new(exe).spawn();
+        let _ = std::process::Command::new(exe).args(args).spawn();
     }
 }
 
@@ -448,6 +569,8 @@ unsafe fn show_menu(hwnd: HWND) {
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
     AppendMenuW(menu, MF_STRING, CMD_PANEL, wide("Quick optimise\u{2026}").as_ptr());
     AppendMenuW(menu, MF_STRING, CMD_OPEN, wide(&format!("Open {APP_NAME}")).as_ptr());
+    let focus_label = if crate::license::is_pro() { "Focus mode" } else { "Focus mode (Pro)" };
+    AppendMenuW(menu, MF_STRING | if focus::is_on() { MF_CHECKED } else { 0 }, CMD_FOCUS, wide(focus_label).as_ptr());
     AppendMenuW(menu, MF_STRING | if autostart { MF_CHECKED } else { 0 }, CMD_AUTOSTART, wide("Start with Windows").as_ptr());
     AppendMenuW(menu, MF_STRING, CMD_UPDATE, wide(&format!("Check for updates (v{})", crate::install::VERSION)).as_ptr());
     AppendMenuW(menu, MF_SEPARATOR, 0, null());
@@ -469,6 +592,7 @@ unsafe fn show_menu(hwnd: HWND) {
             DestroyWindow(hwnd);
         }
         CMD_UPDATE => spawn_update_check(hwnd, true),
+        CMD_FOCUS => toggle_focus(hwnd),
         _ => {}
     }
 }
@@ -483,11 +607,7 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
         WM_TRAY => {
             match (lparam as u32) & 0xFFFF {
                 WM_LBUTTONUP => toggle_panel(),
-                NIN_BALLOONUSERCLICK if BALLOON_IS_UPDATE.with(Cell::get) => {
-                    BALLOON_IS_UPDATE.with(|b| b.set(false));
-                    offer_update(hwnd);
-                }
-                WM_LBUTTONDBLCLK | NIN_BALLOONUSERCLICK => open_app(),
+                WM_LBUTTONDBLCLK => open_app(),
                 WM_RBUTTONUP | WM_CONTEXTMENU => show_menu(hwnd),
                 _ => {}
             }
@@ -497,6 +617,23 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             on_devtools_result();
             0
         }
+        WM_AUTOPILOT => {
+            on_autopilot_done(hwnd);
+            0
+        }
+        WM_FOCUS => {
+            on_focus_done(hwnd);
+            0
+        }
+        popup::WM_TOAST_ACTION => {
+            match wparam {
+                TAG_PANEL => open_panel(),
+                TAG_UPDATE => offer_update(hwnd),
+                TAG_HISTORY => open_app_with(&["--history"]),
+                _ => {}
+            }
+            0
+        }
         WM_UPDATE => {
             let manual = wparam == 1;
             match lparam {
@@ -504,30 +641,19 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
                 1 => {
                     let v = AGENT_UPDATE.lock().unwrap_or_else(|e| e.into_inner()).as_ref().map(|r| r.version.clone()).unwrap_or_default();
                     log(&format!("update: version {v} is available"));
-                    balloon(hwnd, &format!("OneClick Optimizer {v} is available"), "Click here to update now (takes a few seconds).", false);
-                    BALLOON_IS_UPDATE.with(|b| b.set(true));
+                    notify(hwnd, toast(&format!("Version {v} is ready"), "Updating takes a few seconds and keeps your settings and history.", Some("See what's new"), TAG_UPDATE));
                 }
-                0 if manual => balloon(hwnd, "You're up to date", &format!("OneClick Optimizer {} is the latest version.", crate::install::VERSION), false),
+                0 if manual => popup::show_toast(hwnd, toast("You're up to date", &format!("{APP_NAME} {} is the latest version.", crate::install::VERSION), None, 0)),
                 2 if manual => {
                     let e = AGENT_UPDATE_ERR.lock().unwrap_or_else(|x| x.into_inner()).take().unwrap_or_default();
-                    balloon(hwnd, "Couldn't check for updates", &e, false);
+                    popup::show_toast(hwnd, toast("Couldn't check for updates", &e, None, 0));
                 }
                 _ => {}
             }
             0
         }
-        WM_UPDATE_DONE => {
-            if wparam == 1 {
-                log("update: handing over to the new version");
-                DestroyWindow(hwnd); // the update restarts the tray watch
-            } else {
-                let e = AGENT_UPDATE_ERR.lock().unwrap_or_else(|x| x.into_inner()).take().unwrap_or_default();
-                log(&format!("update failed: {e}"));
-                balloon(hwnd, "The update couldn't be installed", &e, true);
-            }
-            0
-        }
         WM_DESTROY => {
+            popup::close_toast();
             let nid = base_nid(hwnd);
             Shell_NotifyIconW(NIM_DELETE, &nid);
             log("tray watch stopped");
@@ -559,6 +685,7 @@ struct Panel {
     close: HWND,
     optimize: HWND,
     open: HWND,
+    focus: HWND,
     dpi: i32,
     f: Fonts,
     logo: HICON,
@@ -657,6 +784,7 @@ pub fn open_panel() {
             close: mk(ID_P_CLOSE),
             optimize: mk(ID_P_OPTIMIZE),
             open: mk(ID_P_OPEN),
+            focus: mk(ID_P_FOCUS),
             dpi,
             f: Fonts::new(dpi),
             logo: icon::app_icon(24 * dpi / 96),
@@ -664,6 +792,7 @@ pub fn open_panel() {
         PANEL.with(|c| c.set(Some(p)));
         let s = |v: i32| v * dpi / 96;
         windows_sys::Win32::UI::WindowsAndMessaging::MoveWindow(p.close, w - s(46), s(10), s(34), s(34), 1);
+        windows_sys::Win32::UI::WindowsAndMessaging::MoveWindow(p.focus, s(16), h - s(192), w - s(32), s(56), 1);
         windows_sys::Win32::UI::WindowsAndMessaging::MoveWindow(p.optimize, s(16), h - s(124), w - s(32), s(64), 1);
         windows_sys::Win32::UI::WindowsAndMessaging::MoveWindow(p.open, s(16), h - s(52), w - s(32), s(36), 1);
 
@@ -737,7 +866,7 @@ unsafe fn panel_paint(p: &Panel, hdc: HDC, w: i32, h: i32) {
     text(hdc, &format!("Free right now: {}", fmt_bytes(mem.avail_phys)), rect(tx, s(118), w - s(12), s(138)), p.f.small, MUTED, DT_SINGLELINE);
 
     // Biggest apps.
-    text(hdc, "USING THE MOST MEMORY", rect(s(18), s(160), w - s(16), s(180)), p.f.small_bold, MUTED, DT_SINGLELINE);
+    text(hdc, "Using the most memory", rect(s(18), s(160), w - s(16), s(180)), p.f.small_bold, MUTED, DT_SINGLELINE);
     for (i, (name, bytes)) in top.iter().enumerate() {
         let y = s(182) + i as i32 * s(24);
         text(hdc, name, rect(s(18), y, w - s(110), y + s(22)), p.f.body, INK, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
@@ -745,7 +874,7 @@ unsafe fn panel_paint(p: &Panel, hdc: HDC, w: i32, h: i32) {
     }
 
     // Plan / progress / result box.
-    let bx = rect(s(16), s(262), w - s(16), h - s(136));
+    let bx = rect(s(16), s(262), w - s(16), h - s(204));
     let gfx = Gfx::new(hdc);
     gfx.fill_round(&bx, s(12) as f32, BG, None);
     let inner_l = bx.left + s(14);
@@ -768,11 +897,15 @@ unsafe fn panel_paint(p: &Panel, hdc: HDC, w: i32, h: i32) {
                 text(hdc, "Nothing to fix right now", rect(inner_l + s(30), bx.top + s(14), bx.right - s(10), bx.top + s(40)), p.f.bold, INK, DT_SINGLELINE | DT_VCENTER);
                 text(hdc, "Your PC is in good shape. Open the full app for details.", rect(inner_l, bx.top + s(46), bx.right - s(10), bx.bottom - s(8)), p.f.small, MUTED, DT_WORDBREAK);
             } else {
-                text(hdc, "ONE CLICK WILL", rect(inner_l, bx.top + s(10), bx.right, bx.top + s(30)), p.f.small_bold, MUTED, DT_SINGLELINE);
-                for (i, line) in lines.iter().take(4).enumerate() {
+                text(hdc, "One click will", rect(inner_l, bx.top + s(10), bx.right, bx.top + s(30)), p.f.small_bold, MUTED, DT_SINGLELINE);
+                let gfx = Gfx::new(hdc);
+                for i in 0..lines.len().min(3) {
+                    gfx.dot((inner_l + s(3)) as f32, (bx.top + s(34) + i as i32 * s(24) + s(11)) as f32, s(2) as f32, MUTED);
+                }
+                drop(gfx);
+                for (i, line) in lines.iter().take(3).enumerate() {
                     let y = bx.top + s(34) + i as i32 * s(24);
-                    text(hdc, "\u{E73E}", rect(inner_l, y, inner_l + s(22), y + s(22)), p.f.icons, ACCENT, DT_SINGLELINE | DT_VCENTER);
-                    text(hdc, line, rect(inner_l + s(26), y, bx.right - s(8), y + s(22)), p.f.body, INK, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+                    text(hdc, line, rect(inner_l + s(14), y, bx.right - s(8), y + s(22)), p.f.body, INK, DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
                 }
             }
         }
@@ -825,14 +958,28 @@ unsafe fn panel_draw_item(p: &Panel, d: &DrawItem) {
                 PState::Working => ("Optimising\u{2026}".to_string(), String::new()),
                 PState::Done => ("Close".to_string(), String::new()),
                 PState::Nothing => ("All good".to_string(), String::new()),
+                PState::Ready if !crate::license::can_one_click() => ("Get unlimited with Pro".to_string(), "your 3 free one-click runs are used".to_string()),
                 PState::Ready => ("Optimise now".to_string(), optimize::frees_text(fix, junk).unwrap_or_default()),
             };
-            draw_primary(d, CARD, &label, &sub, &p.f, Some(if state == PState::Done { '\u{E73E}' } else { '\u{E945}' }), p.dpi);
+            draw_primary(d, CARD, &label, &sub, &p.f, None, p.dpi);
         }
-        ID_P_OPEN => {
-            fill(d.hdc, &d.rc, CARD);
-            let fg = if hovered(d.hwnd_item) { ACCENT_DOWN } else { ACCENT };
-            text(d.hdc, &format!("Open {APP_NAME}  \u{2192}"), d.rc, p.f.bold, fg, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        ID_P_OPEN => draw_link(d, CARD, &format!("Open {APP_NAME}"), &p.f, DT_CENTER),
+        ID_P_FOCUS => {
+            let rc = d.rc;
+            fill(d.hdc, &rc, CARD);
+            let pro = crate::license::is_pro();
+            let on = focus::is_on();
+            Gfx::new(d.hdc).fill_round(&rc, s(10) as f32, if hovered(d.hwnd_item) { BG } else { CARD }, Some(BORDER));
+            text(d.hdc, "Focus mode", rect(rc.left + s(14), rc.top + s(8), rc.right - s(70), rc.top + s(30)), p.f.bold, INK, DT_SINGLELINE | DT_VCENTER);
+            let sub = if !pro {
+                "Full power for the apps you use \u{00B7} Pro".to_string()
+            } else if on {
+                focus::load().map_or(String::new(), |st| st.summary())
+            } else {
+                "Full power for the apps you use".to_string()
+            };
+            text(d.hdc, &sub, rect(rc.left + s(14), rc.top + s(28), rc.right - s(70), rc.bottom - s(6)), p.f.small, MUTED, DT_SINGLELINE | DT_END_ELLIPSIS);
+            draw_switch(d.hdc, &rect(rc.right - s(14) - s(40), rc.top, rc.right - s(14), rc.bottom), on, DISABLED, p.dpi);
         }
         _ => {}
     }
@@ -847,10 +994,17 @@ unsafe fn panel_optimize(p: &Panel) {
         PState::Ready => {}
         _ => return,
     }
+    if !crate::license::can_one_click() {
+        // Free runs used up: show what Pro is in the app instead.
+        open_app_with(&["--pro"]);
+        DestroyWindow(p.hwnd);
+        return;
+    }
     let (ops, junk) = with_pdata(|d| (d.ops.clone(), d.scan.as_ref().map(|s| s.junk_bytes()).unwrap_or(0)));
     if ops.is_empty() {
         return;
     }
+    crate::license::use_free_run();
     PSTATE.with(|c| c.set(PState::Working));
     PSTEP.with(|c| c.set(0));
     EnableWindow(p.optimize, 0);
@@ -899,6 +1053,15 @@ unsafe extern "system" fn popup_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpara
                             DestroyWindow(hwnd);
                         }
                     }
+                    ID_P_FOCUS => {
+                        let tray = ST.with(|s| s.borrow().as_ref().map(|st| st.hwnd));
+                        if let Some(tray) = tray {
+                            toggle_focus(tray);
+                        }
+                        if !crate::license::is_pro() && PSTATE.with(Cell::get) != PState::Working {
+                            DestroyWindow(hwnd);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -912,7 +1075,7 @@ unsafe extern "system" fn popup_proc(hwnd: HWND, msg: u32, wparam: WPARAM, lpara
                 }
                 PSPIN.with(|c| c.set((c.get() + 10.0) % 360.0));
                 if let Some(p) = panel() {
-                    let r = rect(0, ps(&p, 262), ps(&p, POPUP_W), ps(&p, POPUP_H) - ps(&p, 136));
+                    let r = rect(0, ps(&p, 262), ps(&p, POPUP_W), ps(&p, POPUP_H) - ps(&p, 204));
                     InvalidateRect(hwnd, &r, 0);
                 }
             }

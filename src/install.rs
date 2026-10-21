@@ -299,6 +299,8 @@ fn today() -> String {
 
 // --------------------------------------------------------------- install
 
+const NOTICES: &str = include_str!("../THIRD-PARTY-NOTICES.txt");
+
 /// Installs `src_exe` (normally this very exe) into `l`.
 pub fn install(src_exe: &Path, l: &Layout, o: &Options) -> Result<(), String> {
     std::fs::create_dir_all(&l.dir).map_err(|e| format!("couldn't create {}: {e}", l.dir.display()))?;
@@ -311,6 +313,8 @@ pub fn install(src_exe: &Path, l: &Layout, o: &Options) -> Result<(), String> {
             let _ = put_file(&cli, &l.dir.join("oneclick-cli.exe"));
         }
     }
+    // Open-source license notices travel inside the exe.
+    let _ = std::fs::write(l.dir.join("THIRD-PARTY-NOTICES.txt"), NOTICES);
 
     create_shortcut(&l.start_menu_lnk, &exe, "", "Make your PC faster in one click")?;
     if o.desktop_shortcut {
@@ -429,6 +433,7 @@ mod tests {
 
         install(&src, &l, &Options { desktop_shortcut: true, tray_at_startup: false }).unwrap();
         assert!(l.exe().exists(), "exe copied under its app name");
+        assert!(std::fs::read_to_string(l.dir.join("THIRD-PARTY-NOTICES.txt")).unwrap().contains("serde_json"));
         assert!(is_lnk(&l.start_menu_lnk), "start menu shortcut");
         assert!(is_lnk(&l.desktop_lnk), "desktop shortcut");
         assert_eq!(installed_version(&l).as_deref(), Some(VERSION));

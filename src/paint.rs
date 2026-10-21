@@ -31,7 +31,6 @@ pub const ACCENT: Rgb = (13, 148, 136);
 pub const ACCENT_LIGHT: Rgb = (45, 212, 191);
 pub const ACCENT_HOVER: Rgb = (15, 118, 110);
 pub const ACCENT_DOWN: Rgb = (17, 94, 89);
-pub const BLUE: Rgb = (37, 99, 235);
 pub const DISABLED: Rgb = (203, 213, 225);
 pub const GOOD: Rgb = (22, 163, 74);
 pub const WARN: Rgb = (217, 119, 6);
@@ -355,7 +354,10 @@ pub struct DrawItem {
 pub const ODS_SELECTED: u32 = 1;
 pub const ODS_DISABLED: u32 = 4;
 
-/// The big gradient "Optimise now" style button.
+/// Corner radius of buttons and inputs (cards use 12, the hero 16).
+pub const BUTTON_RADIUS: i32 = 8;
+
+/// The solid accent button ("Optimise now", "Update now"): one per screen.
 ///
 /// # Safety
 /// `d` must come from a WM_DRAWITEM message.
@@ -366,16 +368,17 @@ pub unsafe fn draw_primary(d: &DrawItem, bg: Rgb, label: &str, sub: &str, f: &Fo
     let pressed = d.item_state & ODS_SELECTED != 0;
     let hover = hovered(d.hwnd_item);
     let g = Gfx::new(d.hdc);
-    let radius = (12 * dpi / 96) as f32;
-    if disabled {
-        g.fill_round(&rc, radius, DISABLED, None);
+    let radius = (BUTTON_RADIUS * dpi / 96) as f32;
+    let face = if disabled {
+        DISABLED
     } else if pressed {
-        g.fill_round(&rc, radius, ACCENT_DOWN, None);
+        ACCENT_DOWN
     } else if hover {
-        g.fill_round_gradient(&rc, radius, ACCENT_HOVER, (29, 78, 216));
+        ACCENT_HOVER
     } else {
-        g.fill_round_gradient(&rc, radius, ACCENT, BLUE);
-    }
+        ACCENT
+    };
+    g.fill_round(&rc, radius, face, None);
     drop(g);
     let fg = if disabled { MUTED } else { WHITE };
     let s = |v: i32| v * dpi / 96;
@@ -395,6 +398,48 @@ pub unsafe fn draw_primary(d: &DrawItem, bg: Rgb, label: &str, sub: &str, f: &Fo
     if has_sub {
         text(d.hdc, sub, rect(rc.left, bottom - s(2), rc.right, rc.bottom - s(6)), f.small, if disabled { MUTED } else { (204, 251, 241) }, DT_SINGLELINE | DT_CENTER);
     }
+}
+
+/// White outlined button for the second choice next to a primary one.
+///
+/// # Safety
+/// `d` must come from a WM_DRAWITEM message.
+pub unsafe fn draw_secondary(d: &DrawItem, bg: Rgb, label: &str, f: &Fonts, dpi: i32) {
+    let rc = d.rc;
+    fill(d.hdc, &rc, bg);
+    let disabled = d.item_state & ODS_DISABLED != 0;
+    let pressed = d.item_state & ODS_SELECTED != 0;
+    let hover = hovered(d.hwnd_item) && !disabled;
+    let face = if pressed { (241, 245, 249) } else if hover { (248, 250, 252) } else { CARD };
+    let edge = if hover { (148, 163, 184) } else { BORDER };
+    Gfx::new(d.hdc).fill_round(&rc, (BUTTON_RADIUS * dpi / 96) as f32, face, Some(edge));
+    text(d.hdc, label, rc, f.bold, if disabled { DISABLED } else { INK }, DT_CENTER | DT_SINGLELINE | DT_VCENTER | DT_END_ELLIPSIS);
+}
+
+/// A text-only button (links such as "Skip this version").
+///
+/// # Safety
+/// `d` must come from a WM_DRAWITEM message.
+pub unsafe fn draw_link(d: &DrawItem, bg: Rgb, label: &str, f: &Fonts, flags: u32) {
+    fill(d.hdc, &d.rc, bg);
+    let disabled = d.item_state & ODS_DISABLED != 0;
+    let fg = if disabled { DISABLED } else if hovered(d.hwnd_item) { ACCENT_DOWN } else { ACCENT };
+    text(d.hdc, label, d.rc, f.bold, fg, DT_SINGLELINE | DT_VCENTER | flags);
+}
+
+/// On/off switch drawn inside `rc` (track 40x22 logical, right-aligned).
+///
+/// # Safety
+/// `hdc` must be a valid device context.
+pub unsafe fn draw_switch(hdc: HDC, rc: &RECT, on: bool, off_track: Rgb, dpi: i32) {
+    let s = |v: i32| v * dpi / 96;
+    let (sw, sh) = (s(40), s(22));
+    let sx = rc.right - sw;
+    let sy = (rc.top + rc.bottom) / 2 - sh / 2;
+    let gfx = Gfx::new(hdc);
+    gfx.fill_round(&rect(sx, sy, sx + sw, sy + sh), (sh / 2) as f32, if on { ACCENT } else { off_track }, None);
+    let knob = if on { sx + sw - sh / 2 } else { sx + sh / 2 };
+    gfx.dot(knob as f32, (sy + sh / 2) as f32, (sh / 2 - s(3)) as f32, WHITE);
 }
 
 /// Width in pixels of `s` drawn with `font`.

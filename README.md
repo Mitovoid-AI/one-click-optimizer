@@ -15,7 +15,7 @@ Written in Rust with raw Win32 / GDI+: no browser engine and no UI framework.
 
 ## Download
 
-Get **`OneClickOptimizer-Setup.exe`** from the [latest release](https://github.com/Mitovoid-AI/one-click-optimizer/releases/latest). It's about 900 KB.
+Get **`OneClickOptimizer-Setup.exe`** from the [latest release](https://github.com/Mitovoid-AI/one-click-optimizer/releases/latest). It's about 1.2 MB. The website is at https://mitovoid-ai.github.io/one-click-optimizer/.
 
 | File | What it is |
 |---|---|
@@ -74,27 +74,103 @@ From the tray you can also right-click → **Check for updates**. Portable copie
 
 The sidebar holds the detail pages:
 - **Junk files**: every category with its size. The risky ones (browser cache, developer caches, Recycle Bin, Windows Update downloads) are unticked.
+- **Developer junk**: `node_modules`, Rust `target`, Gradle `build` and `.gradle`, Python virtual environments, .NET `bin`/`obj`, Next.js/Nuxt/Angular caches, and the shared Gradle, Maven, NuGet, Cargo, pnpm and Bun caches.
+  - It searches your user folder and every fixed drive (never Windows, Program Files, ProgramData, AppData or other users' folders).
+  - A folder only counts when its project file sits next to it: `node_modules` needs a `package.json`, `target` needs a `Cargo.toml`, and so on. The project file is checked again right before deleting.
+  - Links are never followed, so pnpm's linked packages stay safe.
+  - Projects nobody changed for 30+ days are ticked. Package caches are never ticked for you.
 - **Apps using memory**: close any app.
 - **Start with Windows**: switch apps on or off at sign-in.
 - **Background services**: set services to start only when needed.
+- **Autopilot & Focus**: scheduled clean-ups and Focus mode (see below).
 - **History & undo**: everything the app changed, with undo for settings changes.
+
+### Autopilot (scheduled clean-up)
+
+Runs from the tray watch, daily or weekly, once the PC has been idle for 5 minutes.
+
+- **What it does.** It deletes temporary files older than 7 days and crash dumps, and closes Gradle and Kotlin build daemons that sat idle. Dev servers (Vite, Next.js, Expo, nodemon...) and adb are closed only after you turn on **Also close idle dev servers and adb**.
+- **When a program counts as idle.** It closes a program only if all of these hold:
+  - The tray watch recorded it using under 2 seconds of CPU over the last 30 minutes. It samples every 5 minutes; a 2-second check isn't enough.
+  - Nothing is connected to it, such as a browser tab on a dev server, a build talking to its daemon, or a phone on a test server.
+  - You haven't picked it in History and chosen **Never close it automatically**. Kept programs are also never ticked for one-click Optimise. Clear the list on the Autopilot & Focus page.
+- **What it never does.** It never closes apps you use, never touches startup apps or services, and never asks for admin rights.
+- **When it waits.** It skips its turn on a low battery, during presentations and full-screen games, and while Focus mode is on.
+- **Afterwards.** Everything goes into History, and a notification says what was freed. "Run now" on the page runs it right away.
+
+### Focus mode
+
+One switch, on the Autopilot & Focus page, in the tray panel or in the tray menu, gives the apps you're using all of the PC's power:
+
+- **What slows down.** Busy background programs go into Windows' efficiency mode, the same as Task Manager's: lower priority and EcoQoS.
+- **Power mode.** It switches to Best performance.
+- **Never slowed:**
+  - apps with a window on screen, and everything they started (a build run from your editor, a game's helpers);
+  - browsers, calls, music, recording and anti-cheat programs;
+  - Windows itself.
+- **While it's on.** Every 30 seconds the tray watch gives full speed back to apps you switch to, and slows programs that became busy.
+- **Turning it off.** Everything goes back. The state is saved in `focus.json`, so a crash or restart never leaves anything slowed or the power mode changed.
+
+### Notifications
+
+The tray watch shows its own small notifications above the tray, each with one button:
+- memory is almost full (**Optimise**)
+- idle dev tools (**Free it**)
+- a new version (**See what's new**)
+- Autopilot results (**See details**)
+
+They wait while you present or play full-screen. A new version opens the update window: what's new, then **Update now**, **Later** or **Skip this version**, with a progress bar while it downloads.
 
 ### Tray watch and quick panel
 
 Flip **Watch in tray** in the sidebar, or run `OneClickOptimizer.exe agent`.
 
 - **Left-click** the tray icon to open the quick panel. It shows memory use, the 3 biggest apps, what one click will do, and an **Optimise now** button.
-- **Right-click** the icon for Quick optimise, Open the app, Start with Windows, or Exit.
+- **Right-click** the icon for Quick optimise, Open the app, Focus mode, Start with Windows, Check for updates, or Exit.
 - It warns you once when memory has been critical for 2 minutes, and once when dev tools sit idle.
 - Its activity is logged to `%LOCALAPPDATA%\OneClickOptimizer\agent.log`.
+
+### Pro ($10 once, no account)
+
+Pro switches on by itself once the Polar IDs are filled in (`POLAR` in `src/license.rs`). Until then every feature is free.
+
+| | Free | Pro |
+|---|---|---|
+| Scan, health score, every detail page, fixes one by one, undo | Yes | Yes |
+| One-click Optimise (window and tray) | 3 times | Unlimited |
+| Developer junk | See it | Clean it |
+| Autopilot (scheduled clean-ups) | | Yes |
+| Focus mode | | Yes |
+
+- **Buy Pro** opens Polar's checkout in the browser. Polar is the merchant of record and handles payment, tax and receipts. The buyer only gives an email address and gets a license key.
+- **Activating** means pasting the key on the Pro page. The app checks it once with the store's public license API, which needs no secret in the app.
+- **Storage and re-checks.** The key is saved encrypted with Windows DPAPI and tied to this PC. It is re-checked quietly about every 14 days. Being offline never switches Pro off; only a refunded or disabled key does.
+- **Moving PCs.** "Move Pro to another PC" frees the activation. One key works on up to 3 PCs.
+- **What goes to the store.** Only the key and an anonymous PC tag (derived from the Windows installation ID). The PC name is not sent.
+
+See [SELLING.md](SELLING.md) for setting up the store and launching.
 
 ### Command line
 
 ```
 oneclick-cli scan            # deep-scan report (read-only)
 oneclick-cli scan --json     # same, machine-readable
+oneclick-cli dev             # developer junk on this PC (read-only)
+oneclick-cli bench --json    # measurements used by the website (read-only scans + a ~20 s Focus test)
 oneclick-cli history         # changes made so far
 ```
+
+## Website
+
+`docs/` is the GitHub Pages site. It has the download links, real screenshots, and charts drawn from `docs/data/benchmarks.json`.
+
+- **Refresh the measurements on your own PC:**
+  ```
+  cargo build --release
+  powershell -ExecutionPolicy Bypass -File tools\bench.ps1
+  ```
+  The script runs `oneclick-cli bench`. It also measures the window and tray watch from a throwaway data folder, and rewrites `docs/data/benchmarks.json` and `.js`.
+- **Turn the site on once:** repository Settings → Pages → Deploy from a branch → `main`, folder `/docs`. It's then served at `https://mitovoid-ai.github.io/one-click-optimizer/`.
 
 ## What the deep scan checks
 
@@ -136,6 +212,7 @@ git push origin v0.3.0
 
 Installed copies see the new release and offer the update.
 
+
 ## Building and testing
 
 ```
@@ -156,7 +233,11 @@ Test switches:
 - `OCO_TRACE=1` prints per-category junk scan times.
 - `OCO_FAKE_VERSION=0.1.0` makes the app think it's older, to try the update prompt.
 - `OCO_NO_UPDATE_CHECK=1` turns the automatic update check off.
-- `OCO_INSTALL_ROOT` and `OCO_DATA_DIR` install into, and keep history in, throwaway folders.
+- `OCO_INSTALL_ROOT` and `OCO_DATA_DIR` install into, and keep history, settings and the license in, throwaway folders.
+- `cargo build --release --features license-mock --target-dir target/mock` builds a copy with an offline fake store (key `OCO-TEST-VALID-KEY`) to try the Pro flow. It is never used for releases.
+- With `OCO_DRY_RUN=1`, Focus mode only works out what it would slow down and changes nothing, and Autopilot reports what it would clean.
+- `OCO_DEV_ROOTS=<folder>;<folder>` makes Developer junk search only those folders (and skip the shared caches).
+- `OCO_IDLE_SECS` fakes how long the PC has been idle, for Autopilot tests.
 
 The release workflow runs all tests before it builds a release, so a version that fails them is never published.
 
@@ -179,5 +260,13 @@ src/
   install.rs    per-user install/uninstall (shortcuts, Settings > Apps entry, startup entry)
   setup.rs      setup screen, update mode (--update), uninstall flow (--uninstall)
   update.rs     GitHub Releases check, Update now / Skip / Later prompt, verified download
+  license.rs    Pro license: Polar (and Dodo / Lemon Squeezy) license API, DPAPI storage
+  settings.rs   small settings file (skipped version, free runs used, Autopilot schedule)
+  devclean.rs   developer junk: find, measure and safely delete
+  autopilot.rs  scheduled clean-up: when it is due, what it cleans
+  focus.rs      Focus mode: efficiency mode for background programs, power mode, restore
+  popup.rs      the app's notifications and the update window
+  web.rs        HTTPS GET/POST (WinINet)
+legal/          EULA, privacy and refund policy drafts
   report.rs     text/JSON report
 ```

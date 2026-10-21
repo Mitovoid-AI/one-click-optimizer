@@ -65,7 +65,8 @@ pub fn deep_scan(progress: &dyn Fn(usize)) -> ScanResult {
     progress(1);
     let junk = junk_thread.join().unwrap_or_default();
     progress(2);
-    let recs = analyze::analyze(&snap);
+    let mut recs = analyze::analyze(&snap);
+    apply_keep(&mut recs, &crate::settings::load().keep_running);
     progress(3);
     let facts = Facts {
         uptime_secs: sys::hw::uptime_secs(),
@@ -79,6 +80,30 @@ pub fn deep_scan(progress: &dyn Fn(usize)) -> ScanResult {
     let lasting: Vec<Insight> = insights.iter().filter(|i| !i.title.starts_with("Restart")).cloned().collect();
     let score_after = health::score_after(&snap.mem, freed, &lasting).max(score);
     ScanResult { snap, recs, junk, insights, facts, score, score_after }
+}
+
+/// Stable name for "never close this": "2 Gradle daemons" and "Gradle daemon"
+/// are the same thing to keep.
+pub fn keep_key(label: &str) -> String {
+    let mut s = label.trim().to_ascii_lowercase();
+    if let Some((first, rest)) = s.split_once(' ') {
+        if first.chars().all(|c| c.is_ascii_digit()) {
+            s = rest.to_string();
+        }
+    }
+    s.replace("daemons", "daemon").replace("servers", "server")
+}
+
+/// Programs you chose to keep running are never ticked for one-click Optimise.
+pub fn apply_keep(recs: &mut [Recommendation], keep: &[String]) {
+    for r in recs.iter_mut() {
+        if let Action::KillProcesses { label, .. } = &r.action {
+            if keep.contains(&keep_key(label)) {
+                r.preselect = false;
+                r.why.push_str(" You chose to keep it running, so it isn't ticked.");
+            }
+        }
+    }
 }
 
 /// "frees 1.5 GB RAM · 1.3 GB disk" (memory and disk space kept apart).
@@ -122,6 +147,7 @@ pub fn plan_lines(r: &ScanResult, ops: &[Op]) -> Vec<String> {
                 junk_n += 1;
                 junk_bytes += r.junk.iter().find(|j| &j.id == id).map_or(0, |j| j.bytes);
             }
+            Action::DeleteDevFolder { .. } => junk_n += 1,
             Action::SetStartupEnabled { .. } => startup += 1,
             Action::SetServiceStart { .. } => services += 1,
         }
@@ -271,7 +297,7 @@ fn count(sum: &mut RunSummary, action: &Action, ok: bool, freed: u64) {
     sum.applied += 1;
     match action {
         Action::KillProcesses { .. } => sum.closed += 1,
-        Action::CleanJunk { .. } => sum.junk_freed += freed,
+        Action::CleanJunk { .. } | Action::DeleteDevFolder { .. } => sum.junk_freed += freed,
         Action::SetStartupEnabled { enabled: false, .. } => sum.startup_off += 1,
         Action::SetStartupEnabled { .. } => {}
         Action::SetServiceStart { .. } => sum.services += 1,
@@ -319,6 +345,17 @@ mod tests {
         ]);
         assert_eq!(r.fix_bytes(), 1500 << 20);
         assert_eq!(r.junk_bytes(), 700 << 20);
+    }
+
+    #[test]
+    fn kept_programs_are_never_ticked() {
+        assert_eq!(keep_key("2 Gradle daemons"), keep_key("Gradle daemon"));
+        assert_eq!(keep_key("3 Android Debug Bridge (adb) servers"), "android debug bridge (adb) server");
+        assert_eq!(keep_key("Vite dev server (shop)"), "vite dev server (shop)");
+        let mut r = result();
+        apply_keep(&mut r.recs, &["gradle daemon".to_string()]);
+        assert!(!r.recs[0].preselect && r.recs[0].why.contains("keep it running"));
+        assert!(r.recs[2].preselect, "other fixes are untouched");
     }
 
     #[test]

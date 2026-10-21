@@ -1,0 +1,114 @@
+window.BENCH = {
+    "measured":  "2026-10-21",
+    "version":  "0.4.0",
+    "windows":  "Windows 11 build 26200",
+    "machine":  {
+                    "cores":  4,
+                    "ram_bytes":  8366907392
+                },
+    "memory":  {
+                   "free_bytes":  1874812928,
+                   "in_use_bytes":  15854260224,
+                   "ram_bytes":  8366907392
+               },
+    "footprint":  {
+                      "exe_bytes":  1283072,
+                      "window_idle_mb":  2.4,
+                      "window_after_scan_mb":  3.9,
+                      "tray_mb":  2.5,
+                      "scan_ms":  2106
+                  },
+    "scan":  {
+                 "idle_programs":  [
+                                       {
+                                           "bytes":  837083136,
+                                           "label":  "Gradle daemon"
+                                       },
+                                       {
+                                           "bytes":  5009408,
+                                           "label":  "2 Android Debug Bridge (adb) servers"
+                                       }
+                                   ],
+                 "junk":  [
+                              {
+                                  "bytes":  4959498,
+                                  "name":  "Temporary files",
+                                  "ticked":  true
+                              },
+                              {
+                                  "bytes":  3628960427,
+                                  "name":  "Browser cache (Chrome, Edge, Brave)",
+                                  "ticked":  false
+                              },
+                              {
+                                  "bytes":  824733040,
+                                  "name":  "Developer caches (npm, pip, Yarn)",
+                                  "ticked":  false
+                              },
+                              {
+                                  "bytes":  13669723,
+                                  "name":  "Windows Update downloads",
+                                  "ticked":  false
+                              },
+                              {
+                                  "bytes":  709798524,
+                                  "name":  "Recycle Bin",
+                                  "ticked":  false
+                              }
+                          ],
+                 "ms":  2106,
+                 "score":  62,
+                 "score_after":  70
+             },
+    "dev":  {
+                "folders":  36,
+                "kinds":  [
+                              {
+                                  "bytes":  9337454338,
+                                  "count":  13,
+                                  "kind":  "node_modules"
+                              },
+                              {
+                                  "bytes":  5025914213,
+                                  "count":  5,
+                                  "kind":  "Package caches"
+                              },
+                              {
+                                  "bytes":  3389232120,
+                                  "count":  6,
+                                  "kind":  "venv"
+                              },
+                              {
+                                  "bytes":  2128450869,
+                                  "count":  4,
+                                  "kind":  ".venv"
+                              },
+                              {
+                                  "bytes":  961794842,
+                                  "count":  1,
+                                  "kind":  "target"
+                              },
+                              {
+                                  "bytes":  161028537,
+                                  "count":  2,
+                                  "kind":  "build"
+                              },
+                              {
+                                  "bytes":  11565256,
+                                  "count":  5,
+                                  "kind":  ".gradle"
+                              }
+                          ],
+                "ms":  5302,
+                "stale_bytes":  4887440983,
+                "total_bytes":  21015440175
+            },
+    "focus":  {
+                  "alone_ms":  888,
+                  "busy_ms":  2311,
+                  "busy_programs":  8,
+                  "cores":  4,
+                  "efficiency_ms":  1206,
+                  "slowed":  8
+              }
+};
