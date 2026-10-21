@@ -320,13 +320,30 @@ const BTN_UPDATE: i32 = 1001;
 const BTN_SKIP: i32 = 1002;
 const BTN_LATER: i32 = 1003;
 
-/// Short "What's new" text from the release notes.
-fn whats_new(notes: &str) -> String {
-    let mut s: String = notes.lines().filter(|l| !l.trim().is_empty()).take(14).collect::<Vec<_>>().join("\n");
+/// Plain-text "What's new" from the release notes: the `## What's new`
+/// section the release workflow copies from CHANGELOG.md (or, failing that,
+/// the readable lines of the notes), without Markdown symbols or tables.
+pub fn whats_new(notes: &str) -> String {
+    let lines: Vec<&str> = notes.lines().map(str::trim).collect();
+    let section: Vec<&str> = match lines.iter().position(|l| l.trim_start_matches('#').trim().eq_ignore_ascii_case("what's new")) {
+        Some(start) => lines[start + 1..].iter().take_while(|l| !l.starts_with('#') && !l.starts_with("---")).copied().collect(),
+        None => lines,
+    };
+    let mut s = section
+        .iter()
+        .filter(|l| !l.is_empty() && !l.starts_with('|') && !l.to_ascii_lowercase().contains("full changelog"))
+        .map(|l| {
+            let l = l.trim_start_matches('#').trim();
+            let l = l.strip_prefix("- ").or_else(|| l.strip_prefix("* ")).map_or(l.to_string(), |rest| format!("\u{2022} {rest}"));
+            l.replace("**", "").replace('`', "")
+        })
+        .take(12)
+        .collect::<Vec<_>>()
+        .join("\n");
     if s.chars().count() > 900 {
         s = s.chars().take(900).collect::<String>() + "\u{2026}";
     }
-    s.replace("**", "")
+    s
 }
 
 /// "Update now / Skip this version / Later" (a native Windows task dialog).
@@ -411,9 +428,17 @@ mod tests {
         assert_eq!(a.size, 925000);
         assert_eq!(a.sha256.as_deref(), Some("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"));
         assert_eq!(r.asset(SUMS_ASSET).unwrap().sha256, None);
-        assert!(whats_new(&r.notes).starts_with("New\n- Faster scan"));
+        assert!(whats_new(&r.notes).starts_with("New\n\u{2022} Faster scan"), "{}", whats_new(&r.notes));
         assert!(parse_release(&SAMPLE.replace("\"prerelease\": false", "\"prerelease\": true")).is_err());
         assert!(parse_release("{}").is_err());
+    }
+
+    #[test]
+    fn whats_new_uses_the_changelog_section() {
+        let notes = "## What's new\n- Shows the real download size\n- Cleaner notes\n\n---\n**Download OneClickOptimizer-Setup.exe**\n| File | What |\n|---|---|\n## What's Changed\n* commit by @x\n**Full Changelog**: https://x";
+        assert_eq!(whats_new(notes), "\u{2022} Shows the real download size\n\u{2022} Cleaner notes");
+        // No section: readable lines only, no tables or changelog links.
+        assert_eq!(whats_new("Hello\n| a | b |\n**Full Changelog**: u\n* fix `x`"), "Hello\n\u{2022} fix x");
     }
 
     #[test]

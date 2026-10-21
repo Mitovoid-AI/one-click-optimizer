@@ -31,8 +31,10 @@ pub fn fmt_bytes(b: u64) -> String {
     let gb = b as f64 / (1u64 << 30) as f64;
     if gb >= 1.0 {
         format!("{gb:.1} GB")
-    } else {
+    } else if b >= 1 << 20 {
         format!("{} MB", b >> 20)
+    } else {
+        format!("{} KB", (b >> 10).max(1))
     }
 }
 
@@ -103,6 +105,8 @@ mod tests {
         assert_eq!(fmt_bytes(512 << 20), "512 MB");
         assert_eq!(fmt_bytes(3 << 30), "3.0 GB");
         assert_eq!(fmt_bytes(1_503_238_553), "1.4 GB");
+        assert_eq!(fmt_bytes(969 * 1024), "969 KB");
+        assert_eq!(fmt_bytes(1), "1 KB");
     }
 
     #[test]

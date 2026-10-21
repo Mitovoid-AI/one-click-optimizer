@@ -51,7 +51,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # "What's new" comes from this version's section in CHANGELOG.md.
+          $log = Get-Content CHANGELOG.md -Raw
+          $m = [regex]::Match($log, "(?ms)^## ${{ github.ref_name }}\s*\r?\n(.*?)(?=^## |\z)")
+          $changes = if ($m.Success) { $m.Groups[1].Value.Trim() } else { "- Improvements and fixes" }
           $notes = @"
+          ## What's new
+          $changes
+
+          ---
+
           **Download OneClickOptimizer-Setup.exe** and double-click it to install (no admin needed).
           Already installed? The app offers this update automatically.
 
