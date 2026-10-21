@@ -74,3 +74,22 @@ jobs:
           Windows SmartScreen may warn because the app isn't code-signed yet: click **More info** then **Run anyway**.
           "@
           gh release create "${{ github.ref_name }}" dist/* --title "OneClick Optimizer ${{ github.ref_name }}" --notes $notes --generate-notes
+
+      # The website (docs/, deployed by Vercel from main) serves the installer
+      # itself, so visitors never land on GitHub. Swap in the new one.
+      - name: Update the website's download
+        shell: pwsh
+        run: |
+          git fetch --depth 1 origin main
+          git checkout -B main origin/main
+          New-Item -ItemType Directory -Force docs/download | Out-Null
+          Copy-Item dist/OneClickOptimizer-Setup.exe docs/download/OneClickOptimizer-Setup.exe -Force
+          git add docs/download/OneClickOptimizer-Setup.exe
+          if (git status --porcelain docs/download) {
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git commit -m "Website download: ${{ github.ref_name }}"
+            git push origin main
+          } else {
+            "The website already has this installer."
+          }

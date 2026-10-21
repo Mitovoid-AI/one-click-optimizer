@@ -162,24 +162,18 @@ oneclick-cli history         # changes made so far
 
 ## Website
 
-`docs/` is the GitHub Pages site. It has the download links, real screenshots, and charts drawn from `docs/data/benchmarks.json`.
+`docs/` is the website, live at https://oneclickoptimizer.vercel.app/. It has real screenshots, charts drawn from `docs/data/benchmarks.json`, and the installer itself (`docs/download/OneClickOptimizer-Setup.exe`), so visitors never land on GitHub.
 
+- **Hosting:** Vercel is connected to this repository with **Root Directory `docs`**, so only that folder is published. Every push to `main` redeploys it.
+- **Downloads:** the release workflow copies each new installer into `docs/download` on `main` (one small bot commit per release), and Vercel redeploys. To refresh it by hand, run `tools\deploy-site.ps1`. It fetches the latest release, checks it against the release's SHA-256 checksums, and copies it in. Commit and push the result.
+- **Visitor counts:** turn on **Analytics → Web Analytics** in the Vercel project. The page loads Vercel's script, which sets no cookies.
 - **Refresh the measurements on your own PC:**
   ```
   cargo build --release
   powershell -ExecutionPolicy Bypass -File tools\bench.ps1
   ```
   The script runs `oneclick-cli bench`. It also measures the window and tray watch from a throwaway data folder, and rewrites `docs/data/benchmarks.json` and `.js`.
-- **Turn the site on once:** repository Settings → Pages → Deploy from a branch → `main`, folder `/docs`. It's then served at `https://mitovoid-ai.github.io/one-click-optimizer/`.
-- **Vercel, website only:** `tools\deploy-site.ps1` uploads just `docs/`, so the app's code never goes to Vercel. It first copies the latest release's files into `docs/download/` and checks them against the release checksums. The download buttons serve them from the site, and the page has no links to GitHub. Run it again after each release. `docs/download/` is not kept in git.
-  - First time, sign in with `npx vercel login`, then run the script and answer its questions:
-    - Set up and deploy? **Yes**
-    - Link to an existing project? **No**
-    - Project name: **oneclick-optimizer**
-    - Code directory: **./**
-    - Change settings? **No**
-  - After that, every run of the script deploys the current `docs/` to production.
-  - Turn on **Analytics → Web Analytics** in the Vercel project to count visits.
+
 ## What the deep scan checks
 
 | Area | What it finds |

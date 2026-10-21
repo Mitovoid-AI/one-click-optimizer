@@ -1,49 +1,45 @@
-# Puts the website on Vercel. Only the docs/ folder is uploaded: the app's
-# source code never leaves your PC.
+# Refreshes the website's download (docs/download/OneClickOptimizer-Setup.exe)
+# with the latest release, checked against the release's SHA-256 checksums.
+# Visitors download it from the site itself and never land on GitHub.
 #
-# Before uploading, it copies the latest release's files into docs/download/
-# (checked against the release's SHA-256 checksums), so visitors download from
-# the site itself and never land on GitHub.
+# You normally don't need this: the release workflow puts each new installer
+# into docs/download on main, and Vercel redeploys the site from there.
 #
-#   First time only:  npx vercel login        (opens your browser to sign in)
-#   Every deploy:     powershell -ExecutionPolicy Bypass -File tools\deploy-site.ps1
-#   Files only:       ... deploy-site.ps1 -FetchOnly   (refresh docs/download, no upload)
-#
-# The first run asks a few setup questions (see README, "Website"); later runs
-# deploy straight to production. Run it again after every new release.
-param([switch]$FetchOnly)
+#   Refresh by hand:   powershell -ExecutionPolicy Bypass -File tools\deploy-site.ps1
+#                      then commit and push docs/download
+#   Deploy without git (Vercel CLI, only docs/ is uploaded):
+#                      npx vercel login   (once)
+#                      powershell -ExecutionPolicy Bypass -File tools\deploy-site.ps1 -Deploy
+param([switch]$Deploy)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $site = Join-Path (Split-Path $PSScriptRoot) 'docs'
 if (-not (Test-Path (Join-Path $site 'index.html'))) { throw "No website found in $site" }
 
 $repo = 'Mitovoid-AI/one-click-optimizer'
-$files = 'OneClickOptimizer-Setup.exe', 'OneClickOptimizer.exe', 'oneclick-cli.exe', 'SHA256SUMS.txt'
+$setup = 'OneClickOptimizer-Setup.exe'
 $release = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest" -Headers @{ 'User-Agent' = 'oneclick-site-deploy' }
 Write-Host "Latest release: $($release.tag_name)"
-$out = Join-Path $site 'download'
-$tmp = Join-Path $out '.incoming'
-New-Item -ItemType Directory -Force $tmp | Out-Null
-foreach ($name in $files) {
-  $asset = $release.assets | Where-Object { $_.name -eq $name }
-  if (-not $asset) { throw "Release $($release.tag_name) has no $name" }
-  Invoke-WebRequest $asset.browser_download_url -OutFile (Join-Path $tmp $name) -UseBasicParsing
+$tmp = Join-Path ([IO.Path]::GetTempPath()) ("oco-site-" + [guid]::NewGuid())
+New-Item -ItemType Directory $tmp | Out-Null
+try {
+  foreach ($name in $setup, 'SHA256SUMS.txt') {
+    $asset = $release.assets | Where-Object { $_.name -eq $name }
+    if (-not $asset) { throw "Release $($release.tag_name) has no $name" }
+    Invoke-WebRequest $asset.browser_download_url -OutFile (Join-Path $tmp $name) -UseBasicParsing
+  }
+  # The installer must match the checksum published with the release.
+  $want = (Get-Content (Join-Path $tmp 'SHA256SUMS.txt') | Where-Object { $_ -match "\s\*?$([regex]::Escape($setup))$" } | ForEach-Object { ($_ -split '\s+')[0].ToLower() } | Select-Object -First 1)
+  $got = (Get-FileHash (Join-Path $tmp $setup) -Algorithm SHA256).Hash.ToLower()
+  if (-not $want -or $want -ne $got) { throw "$setup failed its checksum (expected $want, got $got); nothing changed" }
+  $out = Join-Path $site 'download'
+  New-Item -ItemType Directory -Force $out | Out-Null
+  Copy-Item (Join-Path $tmp $setup) (Join-Path $out $setup) -Force
+} finally {
+  Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue
 }
-# Every program must match the checksum published with the release.
-$sums = @{}
-foreach ($line in Get-Content (Join-Path $tmp 'SHA256SUMS.txt')) {
-  $parts = $line -split '\s+', 2
-  if ($parts.Count -eq 2) { $sums[$parts[1].Trim().TrimStart('*')] = $parts[0].ToLower() }
-}
-foreach ($name in $files | Where-Object { $_ -like '*.exe' }) {
-  $got = (Get-FileHash (Join-Path $tmp $name) -Algorithm SHA256).Hash.ToLower()
-  if ($sums[$name] -ne $got) { throw "$name failed its checksum (expected $($sums[$name]), got $got); nothing was deployed" }
-}
-foreach ($name in $files) { Move-Item -Force (Join-Path $tmp $name) (Join-Path $out $name) }
-Remove-Item $tmp -Force
-[IO.File]::WriteAllText((Join-Path $out 'version.txt'), $release.tag_name.TrimStart('v'))
-Write-Host "docs/download now holds $($release.tag_name), checksums verified."
-if ($FetchOnly) { return }
+Write-Host "docs/download/$setup is now $($release.tag_name) (checksum verified)."
+if (-not $Deploy) { Write-Host 'Commit and push docs/download to publish it.'; return }
 
 if (-not (Test-Path (Join-Path $site '.vercel\project.json'))) {
   Write-Host 'First deploy: answer the questions (project name: oneclick-optimizer, code directory: ./).'

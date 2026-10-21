@@ -149,6 +149,7 @@ h1 .w { display: inline-block; }
 .lede { font-size: 18px; color: var(--ink-2); margin: 0 0 26px; max-width: 30em; }
 .cta { display: flex; flex-wrap: wrap; gap: 12px 16px; align-items: center; }
 .cta-meta { color: var(--ink-3); font-size: 14px; }
+.fine { color: var(--ink-3); font-size: 14px; margin: 16px 0 0; max-width: 34em; }
 .pill { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 46px; padding: 0 22px; border-radius: 999px; font-weight: 650; text-decoration: none; border: 0; cursor: pointer; font-size: 15px; font-family: var(--text); }
 .pill.light { background: var(--pill); color: var(--pill-ink); }
 .pill.light:hover { background: var(--pill-hover); }
@@ -265,15 +266,6 @@ details.method li { margin: 6px 0; font-size: 15px; }
 .plans .what { color: var(--ink-3); font-size: 14px; display: block; }
 .table-scroll { overflow-x: auto; }
 
-/* Download */
-.download { background: var(--surface); border-radius: 28px; padding: 32px 28px; }
-.files { display: grid; gap: 10px; margin: 24px 0 0; padding: 0; list-style: none; }
-@media (min-width: 760px) { .files { grid-template-columns: 1fr 1fr; } }
-.files li { background: var(--bg); border-radius: 14px; padding: 12px 16px; }
-.files strong { display: block; }
-.files a { color: var(--ink); text-decoration: none; }
-.files a:hover strong { text-decoration: underline; }
-.files span { color: var(--ink-3); font-size: 14px; }
 footer { padding: 8px 0 24px; color: var(--ink-3); font-size: 14px; }
 footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 20px; border-top: 1px solid var(--line); padding-top: 20px; }
 footer a { color: var(--ink-2); }
@@ -312,6 +304,7 @@ dialog.menu { box-shadow: var(--dock-shadow); }
         <a class="pill light" href="download/OneClickOptimizer-Setup.exe"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8m0 0 3.2-3.2M8 10 4.8 6.8M2.5 13.5h11"/></svg>Download for Windows</a>
         <span class="cta-meta">Free &middot; Windows 10 and 11 &middot; <span data-bind="exe">1.2 MB</span></span>
       </div>
+      <p class="fine">The app isn't code-signed yet, so Windows may say it protected your PC: choose <strong>More info</strong>, then <strong>Run anyway</strong>. It installs just for you, with no admin prompt.</p>
     </div>
 
     <div class="deck-wrap">
@@ -509,30 +502,12 @@ dialog.menu { box-shadow: var(--dock-shadow); }
   </div>
 </section>
 
-<section id="download">
-  <div class="wrap">
-    <div class="download" data-reveal>
-      <h2>Download</h2>
-      <p class="intro">Windows 10 or 11, 64-bit, about <span data-bind="exe">1.2 MB</span>. The app isn't code-signed yet, so Windows may say it protected your PC: choose <strong>More info</strong>, then <strong>Run anyway</strong>.</p>
-      <div class="cta">
-        <a class="pill light" href="download/OneClickOptimizer-Setup.exe"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 2v8m0 0 3.2-3.2M8 10 4.8 6.8M2.5 13.5h11"/></svg>Download the installer</a>
-        <span class="cta-meta">The app shows what's new each time it updates.</span>
-      </div>
-      <ul class="files">
-        <li><a href="download/OneClickOptimizer-Setup.exe"><strong>OneClickOptimizer-Setup.exe</strong></a><span>Installer: Start menu, optional desktop shortcut and tray watch, uninstall from Settings</span></li>
-        <li><a href="download/OneClickOptimizer.exe"><strong>OneClickOptimizer.exe</strong></a><span>The same app, portable: runs without installing</span></li>
-        <li><a href="download/oneclick-cli.exe"><strong>oneclick-cli.exe</strong></a><span>Command line: <code>scan</code>, <code>dev</code>, <code>bench</code>, <code>history</code></span></li>
-        <li><a href="download/SHA256SUMS.txt"><strong>SHA256SUMS.txt</strong></a><span>Checksums the app uses to verify updates before running them</span></li>
-      </ul>
-    </div>
-  </div>
-</section>
 </main>
 
 <footer>
   <div class="wrap">
     <span>&copy; 2026 Mitovoid AI</span>
-    <a href="#download">Download</a>
+    <a href="download/OneClickOptimizer-Setup.exe">Download</a>
     <a href="#privacy">Privacy</a>
   </div>
 </footer>
@@ -549,7 +524,7 @@ dialog.menu { box-shadow: var(--dock-shadow); }
     <a href="#features">What it does</a>
     <a href="#pro">Free and Pro</a>
     <a href="#privacy">Privacy</a>
-    <a href="#download">Download</a>
+    <a href="download/OneClickOptimizer-Setup.exe">Download <span>1.2 MB</span></a>
   </nav>
 </dialog>
 
