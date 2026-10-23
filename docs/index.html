@@ -187,6 +187,10 @@ h3 { font: 700 21px/1.2 var(--display); letter-spacing: -0.01em; margin: 0 0 6px
   .card { transition: none; }
 }
 
+/* Intro video */
+#intro { padding-top: 8px; }
+.intro-video { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; border-radius: 22px; background: var(--surface); border: 1px solid var(--line); }
+
 /* Why list */
 .why { display: grid; gap: 10px; }
 .why-row { display: flex; gap: 16px; align-items: flex-start; background: var(--surface); border-radius: 18px; padding: 18px 20px; }
@@ -355,6 +359,15 @@ dialog.menu { box-shadow: var(--dock-shadow); }
       <p class="deck-hint">Tap or swipe the cards</p>
       <p class="sr" id="deck-live" aria-live="polite"></p>
     </div>
+  </div>
+</section>
+
+<section id="intro">
+  <div class="wrap" data-reveal>
+    <h2>See it in 20 seconds</h2>
+    <video class="intro-video" controls playsinline preload="none" width="1920" height="1080" poster="assets/intro-poster.webp" aria-label="A 20-second intro: memory at 189% of RAM, one click frees 803 MB, and 19.6 GB of developer junk found on one laptop.">
+      <source src="assets/intro.mp4" type="video/mp4">
+    </video>
   </div>
 </section>
 
@@ -538,6 +551,7 @@ dialog.menu { box-shadow: var(--dock-shadow); }
 
 <dialog class="menu" id="menu" aria-label="Menu">
   <nav>
+    <a href="#intro">Intro video <span>20 seconds</span></a>
     <a href="#why">Why <span>3 reasons</span></a>
     <a href="#measured">Measurements <span>real laptop</span></a>
     <a href="#features">What it does</a>
