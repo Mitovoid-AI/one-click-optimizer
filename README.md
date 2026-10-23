@@ -168,6 +168,12 @@ oneclick-cli history         # changes made so far
 - **Downloads:** the release workflow copies each new installer into `docs/download` on `main` (one small bot commit per release), and Vercel redeploys. To refresh it by hand, run `tools\deploy-site.ps1`. It fetches the latest release, checks it against the release's SHA-256 checksums, and copies it in. Commit and push the result.
 - **Visitor counts:** turn on **Analytics → Web Analytics** in the Vercel project. The page loads Vercel's script, which sets no cookies.
 - **Legal pages:** `docs/terms.html`, `privacy.html`, `refund.html` and `licenses.html` (and the site footer) are built from `legal/` and `THIRD-PARTY-NOTICES.txt`. Edit the wording there, then run `python tools/legal-pages.py`. Your seller name, city and contact email live at the top of that script.
+- **Search engines:**
+  - `docs/robots.txt` is hand-written.
+  - `docs/sitemap.xml` comes from `python tools/sitemap.py`, which `legal-pages.py` also runs. Add new pages to its `PAGES` list.
+  - The legal pages' search titles and descriptions are in `legal-pages.py`; the home page's are in the `<head>` of `docs/index.html`, together with its structured data.
+  - After changing the icon or a screenshot, run `python tools/site-images.py`. It rebuilds the favicon, the right-sized icons, the WebP screenshots and the 1200×630 link-preview image.
+  - `SEO-AUDIT.md` has the latest audit.
 - **Refresh the measurements on your own PC:**
   ```
   cargo build --release

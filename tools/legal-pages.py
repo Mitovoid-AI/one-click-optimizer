@@ -1,18 +1,24 @@
 """Builds the website's legal pages from the texts in legal/.
 
     python tools/legal-pages.py             writes docs/terms.html, privacy.html,
-                                            refund.html, licenses.html and the
-                                            footer of docs/index.html
+                                            refund.html, licenses.html, the
+                                            footer of docs/index.html and
+                                            docs/sitemap.xml (tools/sitemap.py)
     python tools/legal-pages.py --preview   same, with missing details marked
 
 Edit the wording only in legal/EULA.txt, legal/PRIVACY.md, legal/REFUND.md and
 THIRD-PARTY-NOTICES.txt, then run this again. The seller details below fill in
-every [BRACKET]; without them the script refuses to publish.
+every [BRACKET]; without them the script refuses to publish. Each page's search
+title and description live in main().
 """
 import html
+import json
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import sitemap  # noqa: E402
 
 SELLER = "Ashutosh Roy"  # your legal name, shown as the seller
 CITY = "Gurugram, Haryana"  # your city in India, for the license agreement
@@ -147,7 +153,8 @@ def fill(s):
         sys.exit(f"Fill in {label} at the top of tools/legal-pages.py first.")
 
     host = WEBSITE.split("://", 1)[1]
-    s = re.sub(r"\[WEBSITE\]/(\w+)", lambda m: f'<a href="{m[1]}.html">{host}/{m[1]}</a>', s)
+    # Clean URLs: Vercel serves terms.html at /terms (and redirects the .html form).
+    s = re.sub(r"\[WEBSITE\]/(\w+)", lambda m: f'<a href="{m[1]}">{host}/{m[1]}</a>', s)
     s = s.replace("[WEBSITE]", f'<a href="./">{host}</a>')
     s = s.replace("[DATE]", UPDATED)
     s = s.replace("[SELLER LEGAL NAME]", value(SELLER, "[SELLER LEGAL NAME]"))
@@ -163,10 +170,10 @@ FOOTER = """<footer>
   <div class="wrap">
     <span>&copy; 2026 [SELLER LEGAL NAME]</span>
     <a href="download/OneClickOptimizer-Setup.exe">Download</a>
-    <a href="terms.html">Terms</a>
-    <a href="privacy.html">Privacy</a>
-    <a href="refund.html">Refunds</a>
-    <a href="licenses.html">Open-source licenses</a>
+    <a href="terms">Terms</a>
+    <a href="privacy">Privacy</a>
+    <a href="refund">Refunds</a>
+    <a href="licenses">Open-source licenses</a>
     <span>[CONTACT EMAIL]</span>
   </div>
 </footer>"""
@@ -281,17 +288,49 @@ JS = """(function () {
 })();"""
 
 
-def page(slug, title, description, body):
+FONT = "https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&display=swap"
+OG_IMAGE = f"{WEBSITE}/assets/og.png"
+
+
+def page(slug, title, seo_title, description, body):
+    url = f"{WEBSITE}/{slug}"
+    t, d = html.escape(seo_title), html.escape(description)
+    crumbs = json.dumps({
+        "@context": "https://schema.org",
+        "@type": "BreadcrumbList",
+        "itemListElement": [
+            {"@type": "ListItem", "position": 1, "name": "OneClick Optimizer", "item": f"{WEBSITE}/"},
+            {"@type": "ListItem", "position": 2, "name": title, "item": url},
+        ],
+    }, indent=2)
     return f"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} · OneClick Optimizer</title>
-<meta name="description" content="{description}">
+<title>{t}</title>
+<meta name="description" content="{d}">
+<link rel="canonical" href="{url}">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="OneClick Optimizer">
+<meta property="og:url" content="{url}">
+<meta property="og:title" content="{t}">
+<meta property="og:description" content="{d}">
+<meta property="og:image" content="{OG_IMAGE}">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The OneClick Optimizer window listing what slows the PC, with an Optimise now button.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="{t}">
+<meta name="twitter:description" content="{d}">
+<meta name="twitter:image" content="{OG_IMAGE}">
 <meta name="theme-color" content="#0a0f14">
-<link rel="icon" href="assets/icon.png">
-<link rel="canonical" href="{WEBSITE}/{slug}">
+<link rel="icon" href="favicon.ico" sizes="48x48">
+<link rel="icon" type="image/png" sizes="512x512" href="assets/icon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<script type="application/ld+json">
+{crumbs}
+</script>
 <script>
 (function () {{
   try {{
@@ -302,7 +341,8 @@ def page(slug, title, description, body):
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,700;12..96,800&display=swap" rel="stylesheet">
+<link rel="preload" as="style" href="{FONT}" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="{FONT}"></noscript>
 <style>
 {CSS}</style>
 </head>
@@ -310,7 +350,7 @@ def page(slug, title, description, body):
 
 <header class="top">
   <div class="wrap">
-    <a class="brand" href="./"><img src="assets/icon.png" alt="" width="26" height="26">OneClick Optimizer</a>
+    <a class="brand" href="./"><img src="assets/icon-52.png" alt="" width="26" height="26">OneClick Optimizer</a>
     {THEME_BUTTON}
   </div>
 </header>
@@ -337,15 +377,23 @@ def read(name):
 def main():
     pages = []
     _, body = markdown(read("legal/PRIVACY.md"))
-    pages.append(("privacy", "Privacy policy", "What OneClick Optimizer and this website send, to whom, and why.", body))
+    # (slug, heading, search title 50-60 chars, description 140-160 chars, body)
+    pages.append(("privacy", "Privacy policy", "Privacy Policy: What OneClick Optimizer Sends and Keeps",
+                  "OneClick Optimizer keeps your scans on your PC. See what the app and this website send, to whom and why, what Polar collects at checkout, and your rights.", body))
     _, body = markdown(read("legal/REFUND.md"))
-    pages.append(("refund", "Refund policy", "Refunds for OneClick Optimizer Pro.", body))
+    pages.append(("refund", "Refund policy", "Refund Policy for OneClick Optimizer Pro Lifetime License",
+                  "OneClick Optimizer Pro sales are final, so try the free version first. If your key won't activate or Pro fails on your PC, we fix it or refund you.", body))
     body = eula(read("legal/EULA.txt"))
-    pages.append(("terms", "Terms of use (EULA)", "The license agreement for OneClick Optimizer and OneClick Optimizer Pro.", body))
+    pages.append(("terms", "Terms of use (EULA)", "Terms of Use (EULA) for OneClick Optimizer and Pro License",
+                  "The license agreement for OneClick Optimizer: what the free app and the lifetime Pro license allow, how refunds work, warranty, liability and contact.", body))
     body = notices(read("THIRD-PARTY-NOTICES.txt"))
-    pages.append(("licenses", "Open-source licenses", "Open-source components in OneClick Optimizer and their licenses.", body))
+    pages.append(("licenses", "Open-source licenses", "Open-Source Licenses Used in OneClick Optimizer for Windows",
+                  "The open-source parts of OneClick Optimizer, such as serde and windows-sys, listed with the exact version of each and its full MIT license text.", body))
+    for slug, _, seo_title, desc, _ in pages:
+        if not (50 <= len(seo_title) <= 60 and 140 <= len(desc) <= 160):
+            sys.exit(f"{slug}: keep the title at 50-60 characters ({len(seo_title)}) and the description at 140-160 ({len(desc)})")
 
-    out = {f"{slug}.html": fill(page(slug, title, desc, body)) for slug, title, desc, body in pages}
+    out = {f"{slug}.html": fill(page(slug, title, seo_title, desc, body)) for slug, title, seo_title, desc, body in pages}
     index = (DOCS / "index.html").read_text(encoding="utf-8")
     index, n = re.subn(r"<footer>.*?</footer>", lambda _: fill(FOOTER), index, flags=re.S)
     if n != 1:
@@ -355,6 +403,8 @@ def main():
     for name, text in out.items():
         (DOCS / name).write_text(text, encoding="utf-8", newline="\n")
         print(f"wrote docs/{name}")
+    if not PREVIEW:
+        sitemap.main()
     if PREVIEW:
         print("Preview only: fill in the seller details before publishing.")
 

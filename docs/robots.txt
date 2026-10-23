@@ -1,0 +1,5 @@
+# OneClick Optimizer website: every page may be crawled.
+User-agent: *
+Allow: /
+
+Sitemap: https://oneclickoptimizer.vercel.app/sitemap.xml

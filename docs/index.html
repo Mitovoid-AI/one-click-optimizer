@@ -3,13 +3,80 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>OneClick Optimizer</title>
-<meta name="description" content="A 1.2 MB Windows app that finds the idle dev tools, old node_modules and junk files slowing your PC, shows you each one, and clears them in one click.">
+<title>OneClick Optimizer: Free Windows PC Cleaner &amp; RAM Optimizer</title>
+<meta name="description" content="Free Windows 10 and 11 app that finds idle dev tools, old node_modules and junk files slowing your PC, shows you each one, then clears them in one click.">
+<link rel="canonical" href="https://oneclickoptimizer.vercel.app/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="OneClick Optimizer">
+<meta property="og:url" content="https://oneclickoptimizer.vercel.app/">
 <meta property="og:title" content="OneClick Optimizer: less junk, more memory, one click">
 <meta property="og:description" content="Finds what slows your Windows PC and fixes it in one click. Measured on a real 8 GB laptop.">
-<meta property="og:image" content="https://oneclickoptimizer.vercel.app/assets/results.png">
+<meta property="og:image" content="https://oneclickoptimizer.vercel.app/assets/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="The OneClick Optimizer window listing what slows the PC, with an Optimise now button.">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="OneClick Optimizer: less junk, more memory, one click">
+<meta name="twitter:description" content="Finds what slows your Windows PC and fixes it in one click. Measured on a real 8 GB laptop.">
+<meta name="twitter:image" content="https://oneclickoptimizer.vercel.app/assets/og.png">
 <meta name="theme-color" content="#0a0f14">
-<link rel="icon" href="assets/icon.png">
+<link rel="icon" href="favicon.ico" sizes="48x48">
+<link rel="icon" type="image/png" sizes="512x512" href="assets/icon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://oneclickoptimizer.vercel.app/#website",
+      "url": "https://oneclickoptimizer.vercel.app/",
+      "name": "OneClick Optimizer",
+      "inLanguage": "en",
+      "publisher": { "@id": "https://oneclickoptimizer.vercel.app/#publisher" }
+    },
+    {
+      "@type": "Person",
+      "@id": "https://oneclickoptimizer.vercel.app/#publisher",
+      "name": "Ashutosh Roy",
+      "email": "mailto:mitovoid.contact@gmail.com",
+      "url": "https://oneclickoptimizer.vercel.app/"
+    },
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://oneclickoptimizer.vercel.app/#app",
+      "name": "OneClick Optimizer",
+      "url": "https://oneclickoptimizer.vercel.app/",
+      "description": "A free Windows app that finds idle developer tools, old node_modules folders and junk files slowing your PC, shows you each one, then clears them in one click.",
+      "applicationCategory": "UtilitiesApplication",
+      "operatingSystem": "Windows 10, Windows 11",
+      "downloadUrl": "https://oneclickoptimizer.vercel.app/download/OneClickOptimizer-Setup.exe",
+      "image": "https://oneclickoptimizer.vercel.app/assets/icon.png",
+      "screenshot": [
+        "https://oneclickoptimizer.vercel.app/assets/results.png",
+        "https://oneclickoptimizer.vercel.app/assets/developer-junk.png",
+        "https://oneclickoptimizer.vercel.app/assets/autopilot-focus.png"
+      ],
+      "isAccessibleForFree": true,
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "author": { "@id": "https://oneclickoptimizer.vercel.app/#publisher" },
+      "publisher": { "@id": "https://oneclickoptimizer.vercel.app/#publisher" }
+    },
+    {
+      "@type": "VideoObject",
+      "@id": "https://oneclickoptimizer.vercel.app/#intro-video",
+      "name": "OneClick Optimizer in 20 seconds",
+      "description": "Memory at 189% of RAM on an 8 GB laptop, one click frees 803 MB, and 19.6 GB of developer junk found on the same laptop.",
+      "thumbnailUrl": "https://oneclickoptimizer.vercel.app/assets/intro-poster.webp",
+      "contentUrl": "https://oneclickoptimizer.vercel.app/assets/intro.mp4",
+      "uploadDate": "2026-10-23",
+      "duration": "PT21S",
+      "about": { "@id": "https://oneclickoptimizer.vercel.app/#app" },
+      "publisher": { "@id": "https://oneclickoptimizer.vercel.app/#publisher" }
+    }
+  ]
+}
+</script>
 <script>
 (function () {
   var d = document.documentElement;
@@ -22,7 +89,9 @@
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&display=swap" rel="stylesheet">
+<!-- The font loads without holding up the first paint; text shows in the fallback font until it arrives. -->
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&display=swap"></noscript>
 <style>
 /* Night by default (it matches the app's dark sidebar); day follows the
    Windows setting or the switch in the top bar. The cards carry the colour;
@@ -296,7 +365,7 @@ dialog.menu { box-shadow: var(--dock-shadow); }
 
 <header class="top">
   <div class="wrap">
-    <a class="brand" href="#"><img src="assets/icon.png" alt="" width="26" height="26">OneClick Optimizer</a>
+    <a class="brand" href="#"><img src="assets/icon-52.png" alt="" width="26" height="26">OneClick Optimizer</a>
     <div class="top-right">
     <button class="theme" type="button" id="theme" aria-label="Switch to day mode" title="Day or night"><svg class="sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M4.6 4.6l1.4 1.4M18 18l1.4 1.4M2.5 12h2M19.5 12h2M4.6 19.4 6 18M18 6l1.4-1.4"/></svg><svg class="moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5Z"/></svg></button>
     </div>
@@ -307,7 +376,7 @@ dialog.menu { box-shadow: var(--dock-shadow); }
 <section class="hero">
   <div class="wrap">
     <div>
-      <img class="hero-icon" src="assets/icon.png" alt="" width="104" height="104">
+      <picture><source type="image/webp" srcset="assets/icon-208.webp"><img class="hero-icon" src="assets/icon-208.png" alt="" width="104" height="104"></picture>
       <h1 aria-label="Less junk. More memory. One click."><span aria-hidden="true"><span class="w" style="--i:0">Less</span> <span class="w" style="--i:1">junk.</span> <span class="w" style="--i:2">More</span> <span class="w" style="--i:3">memory.</span> <span class="w" style="--i:4">One</span> <span class="w" style="--i:5">click.</span></span></h1>
       <p class="lede">OneClick Optimizer finds the idle dev tools, old <code>node_modules</code> and junk files slowing your Windows PC. It shows you each one, then clears them when you say so.</p>
       <div class="cta">
@@ -318,41 +387,42 @@ dialog.menu { box-shadow: var(--dock-shadow); }
     </div>
 
     <div class="deck-wrap">
+      <h2 class="sr">What it does, in brief</h2>
       <div class="deck" id="deck" tabindex="0" role="region" aria-roledescription="carousel" aria-label="What it does. Tap or swipe the cards, or use the arrow keys.">
         <article class="card" style="--c:#5eead4; --s:#fb7185" data-shape="burst" aria-roledescription="slide">
           <div class="eyebrow">Shown first, done in one click</div>
           <h3>One click</h3>
-          <div class="foot"><p>Closes idle programs and clears old junk, after you have seen the list.</p><a class="open" href="#one-click">Open</a></div>
+          <div class="foot"><p>Closes idle programs and clears old junk, after you have seen the list.</p><a class="open" href="#one-click" aria-label="Open: One click">Open</a></div>
         </article>
         <article class="card" style="--c:#bef264; --s:#8b5cf6" data-shape="scallop" aria-roledescription="slide">
           <div class="eyebrow"><span data-bind="devtotal">19.6 GB</span> found on one laptop</div>
           <h3>Developer junk</h3>
-          <div class="foot"><p>node_modules, build folders and caches from projects you stopped touching.</p><a class="open" href="#developer-junk">Open</a></div>
+          <div class="foot"><p>node_modules, build folders and caches from projects you stopped touching.</p><a class="open" href="#developer-junk" aria-label="Open: Developer junk">Open</a></div>
         </article>
         <article class="card" style="--c:#7dd3fc; --s:#f59e0b" data-shape="blob" aria-roledescription="slide">
           <div class="eyebrow">Cleans up while you are away</div>
           <h3>Autopilot</h3>
-          <div class="foot"><p>Daily or weekly, only when your PC is idle. Never closes what you use.</p><a class="open" href="#autopilot">Open</a></div>
+          <div class="foot"><p>Daily or weekly, only when your PC is idle. Never closes what you use.</p><a class="open" href="#autopilot" aria-label="Open: Autopilot">Open</a></div>
         </article>
         <article class="card" style="--c:#fcd34d; --s:#3b82f6" data-shape="burst" aria-roledescription="slide">
           <div class="eyebrow"><span data-bind="focusx">1.9&times;</span> faster on a busy PC</div>
           <h3>Focus mode</h3>
-          <div class="foot"><p>Background programs slow down so the app you are using gets the whole machine.</p><a class="open" href="#autopilot">Open</a></div>
+          <div class="foot"><p>Background programs slow down so the app you are using gets the whole machine.</p><a class="open" href="#autopilot" aria-label="Open: Focus mode">Open</a></div>
         </article>
         <article class="card" style="--c:#c4b5fd; --s:#a3e635" data-shape="scallop" aria-roledescription="slide">
           <div class="eyebrow">Uses <span data-bind="tray">2.5 MB</span> of memory</div>
           <h3>Tray watch</h3>
-          <div class="foot"><p>A quiet icon that speaks up only when memory runs out or tools sit idle.</p><a class="open" href="#tray">Open</a></div>
+          <div class="foot"><p>A quiet icon that speaks up only when memory runs out or tools sit idle.</p><a class="open" href="#tray" aria-label="Open: Tray watch">Open</a></div>
         </article>
         <article class="card" style="--c:#fda4af; --s:#14b8a6" data-shape="blob" aria-roledescription="slide">
           <div class="eyebrow">Real numbers, real laptop</div>
           <h3>Measured, not promised</h3>
-          <div class="foot"><p>Every figure on this page was measured, and you can rerun it.</p><a class="open" href="#measured">Open</a></div>
+          <div class="foot"><p>Every figure on this page was measured, and you can rerun it.</p><a class="open" href="#measured" aria-label="Open: Measured, not promised">Open</a></div>
         </article>
         <article class="card" style="--c:#fdba74; --s:#0ea5e9" data-shape="burst" aria-roledescription="slide">
           <div class="eyebrow">Nothing hidden</div>
           <h3>Safe by design</h3>
-          <div class="foot"><p>No registry cleaning, no RAM "boost", and every change listed in History.</p><a class="open" href="#one-click">Open</a></div>
+          <div class="foot"><p>No registry cleaning, no RAM "boost", and every change listed in History.</p><a class="open" href="#one-click" aria-label="Open: Safe by design">Open</a></div>
         </article>
       </div>
       <div class="dots" id="dots" role="group" aria-label="Choose a card"></div>
@@ -469,7 +539,7 @@ dialog.menu { box-shadow: var(--dock-shadow); }
           <li>Windows, Program Files and AppData are never searched.</li>
         </ul>
       </div>
-      <figure class="shot"><img src="assets/developer-junk.png" width="1710" height="1106" loading="lazy" alt="The Developer junk page listing node_modules, Rust target, Gradle build and Python .venv folders with their size and when each project last changed."></figure>
+      <figure class="shot"><picture><source type="image/webp" srcset="assets/developer-junk-640.webp 640w, assets/developer-junk-1100.webp 1100w, assets/developer-junk-1710.webp 1710w" sizes="(min-width: 900px) 560px, 100vw"><img src="assets/developer-junk.png" width="1710" height="1106" loading="lazy" decoding="async" alt="The Developer junk page listing node_modules, Rust target, Gradle build and Python .venv folders with their size and when each project last changed."></picture></figure>
     </div>
 
     <div class="feature flip" id="autopilot" data-reveal>
@@ -479,7 +549,7 @@ dialog.menu { box-shadow: var(--dock-shadow); }
         <p><strong>Autopilot</strong> runs daily or weekly once your PC has been idle for 5 minutes. It deletes old temp files and closes build daemons that sat idle for 30 minutes with nothing connected to them. Mark anything "never close" and it stays put.</p>
         <p><strong>Focus mode</strong> puts busy background programs into Windows' efficiency mode and switches the power mode to Best performance. Turn it off and everything goes back.</p>
       </div>
-      <figure class="shot"><img src="assets/autopilot-focus.png" width="1710" height="1106" loading="lazy" alt="The Autopilot and Focus page with a weekly clean-up switched on and Focus mode on."></figure>
+      <figure class="shot"><picture><source type="image/webp" srcset="assets/autopilot-focus-640.webp 640w, assets/autopilot-focus-1100.webp 1100w, assets/autopilot-focus-1710.webp 1710w" sizes="(min-width: 900px) 560px, 100vw"><img src="assets/autopilot-focus.png" width="1710" height="1106" loading="lazy" decoding="async" alt="The Autopilot and Focus page with a weekly clean-up switched on and Focus mode on."></picture></figure>
     </div>
 
     <div class="feature narrow" id="tray" data-reveal>
@@ -489,7 +559,7 @@ dialog.menu { box-shadow: var(--dock-shadow); }
         <p>The tray icon changes colour with memory pressure. Click it for your biggest apps, what one click will do, and a Focus mode switch. It uses about <span data-bind="tray">2.5 MB</span> of memory.</p>
         <p>It speaks up only when memory has been almost full for two minutes, when dev tools sit idle, or when a new version is ready, and it waits while you present or play full-screen.</p>
       </div>
-      <figure class="shot"><img src="assets/tray-panel.png" width="540" height="870" loading="lazy" alt="The tray panel showing memory at 190 percent of RAM, the three apps using the most memory, a Focus mode switch and an Optimise now button."></figure>
+      <figure class="shot"><picture><source type="image/webp" srcset="assets/tray-panel-360.webp 360w, assets/tray-panel-540.webp 540w" sizes="(min-width: 900px) 350px, 100vw"><img src="assets/tray-panel.png" width="540" height="870" loading="lazy" decoding="async" alt="The tray panel showing memory at 190 percent of RAM, the three apps using the most memory, a Focus mode switch and an Optimise now button."></picture></figure>
     </div>
   </div>
 </section>
@@ -518,7 +588,7 @@ dialog.menu { box-shadow: var(--dock-shadow); }
         </tbody>
       </table>
     </div>
-    <p class="fine">Lifetime means Pro and every update for as long as the app is offered. Sales are final, so try the free version first. If Pro won't work on your PC, we fix it or refund you. <a href="refund.html">Refund policy</a> &middot; <a href="terms.html">Terms</a></p>
+    <p class="fine">Lifetime means Pro and every update for as long as the app is offered. Sales are final, so try the free version first. If Pro won't work on your PC, we fix it or refund you. <a href="refund">Refund policy</a> &middot; <a href="terms">Terms</a></p>
   </div>
 </section>
 
@@ -526,7 +596,7 @@ dialog.menu { box-shadow: var(--dock-shadow); }
   <div class="wrap" data-reveal>
     <h2>What leaves your PC</h2>
     <p class="intro">No analytics, no ads, no account. The app asks GitHub whether a new version exists, which like any web request shows GitHub your IP address. Activating Pro sends your key and an anonymous PC tag to the store, Polar, never your PC name. Scans, history and settings stay in <code>%LOCALAPPDATA%\OneClickOptimizer</code>.</p>
-    <p class="intro">This website counts page visits with Vercel Web Analytics, which sets no cookies and keeps no personal data. <a href="privacy.html">The full privacy policy</a></p>
+    <p class="intro">This website counts page visits with Vercel Web Analytics, which sets no cookies and keeps no personal data. <a href="privacy">The full privacy policy</a></p>
   </div>
 </section>
 
@@ -536,10 +606,10 @@ dialog.menu { box-shadow: var(--dock-shadow); }
   <div class="wrap">
     <span>&copy; 2026 Ashutosh Roy</span>
     <a href="download/OneClickOptimizer-Setup.exe">Download</a>
-    <a href="terms.html">Terms</a>
-    <a href="privacy.html">Privacy</a>
-    <a href="refund.html">Refunds</a>
-    <a href="licenses.html">Open-source licenses</a>
+    <a href="terms">Terms</a>
+    <a href="privacy">Privacy</a>
+    <a href="refund">Refunds</a>
+    <a href="licenses">Open-source licenses</a>
     <span><a href="mailto:mitovoid.contact@gmail.com">mitovoid.contact@gmail.com</a></span>
   </div>
 </footer>
